@@ -1,58 +1,40 @@
----
+Abba Xpress ERP - Backend API (.NET 8 / 9)
 
-### 2. `README.md` para el Frontend (React + Vite + Tailwind)
-Guárdalo en la raíz de la carpeta del frontend (`abba-xpress-ui/README.md`):
-
-```markdown
-# Abba Xpress ERP - Frontend Web (React + Vite)
-
-Interfaz web corporativa para operadores de bodega, recepcionistas y administradores. Incluye generador de viñetas térmicas con código de barras Code128, tickets de recepción, modo manifiesto de despacho y bitácora de auditoría.
+API RESTful multisede para el control logístico, recepción de carga, facturación multimoneda (USD / NIO), auditoría de transacciones y traslados inter-sucursales (Managua y León).
 
 ---
 
 ## 🛠️ Requisitos Previos
 
-- [Node.js](https://nodejs.org/) (Versión 18.x o 20.x recomendada)
-- `npm`, `yarn` o `pnpm`
+- [.NET SDK 8.0 o superior](https://dotnet.microsoft.com/download)
+- [MySQL Server 8.0+](https://dev.mysql.com/downloads/mysql/) o MariaDB / SQLite
+- [Visual Studio 2022](https://visualstudio.microsoft.com/) / [VS Code](https://code.visualstudio.com/) con extensión de C#
 
 ---
 
-## ⚙️ Instalación y Configuración
+## ⚙️ Configuración Inicial
 
-1. **Entrar al directorio del frontend:**
+1. **Clonar o abrir el proyecto en tu editor:**
    ```bash
-   cd abba-xpress-ui
-Instalar dependencias del proyecto:
-
-Bash
-npm install
-Configurar Endpoint de la API:
-Crea un archivo .env en la raíz de la carpeta del frontend si necesitas apuntar a un servidor específico:
-
-Fragmento de código
-VITE_API_URL=http://localhost:5271/api
-(Por defecto src/services/api.js apunta al puerto local de la API).
-
-🚀 Ejecución en Entorno Local
-Inicia el servidor de desarrollo:
-
-Bash
-npm run dev
-Abre tu navegador en:
-
-http://localhost:5173
-📦 Construcción para Producción
-Para compilar y empaquetar el proyecto optimizado para hosting o despliegue:
-
-Bash
-npm run build
-Los archivos estáticos listos para producción se generarán en la carpeta /dist.
-
-🖨️ Módulos y Funcionalidades Destacadas
-Recepción Multipaquete: Cálculo dinámico multimoneda (USD / NIO), tarifas por categoría editables en vivo y generación de ticket térmico/digital.
-
-Rótulos y Manifiestos: Impresión directa de viñetas 4x6" con código de barras Code128 y confirmación de despacho inter-sucursal.
-
-Bitácora de Auditoría: Historial cronológico con filtros avanzados por sede y módulo.
-
-Aislamiento Multisede: Interfaces adaptadas automáticamente según los permisos de sede del usuario autenticado (Managua vs. León).
+   cd AbbaXpress.API
+Restaurar dependencias NuGet:Bashdotnet restore
+Configurar variables de entorno y conexión:Crea o verifica tu archivo appsettings.json en la raíz del proyecto:JSON{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost;Port=3306;Database=abbaxpress_db;Uid=root;Pwd=tu_contraseña;"
+  },
+  "Jwt": {
+    "Key": "ClaveSecretaSuperLargaYProtegidaParaFirmarJWT2026*",
+    "Issuer": "AbbaXpressAPI",
+    "Audience": "AbbaXpressApp"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
+}
+Aplicar Migraciones y Seed Data:Ejecuta las migraciones para crear las tablas y sembrar los datos iniciales de sedes, configuraciones y cuentas base:Bashdotnet ef database update
+🚀 Ejecución del ServidorInicia el entorno de desarrollo:Bashdotnet run
+API URL base: http://localhost:5271 o https://localhost:7271Swagger UI: http://localhost:5271/swagger (disponible en modo desarrollo)👤 Credenciales Iniciales (Seed Data)Rol / AlcanceUsuarioContraseñaSucursal AsignadaSuper AdminadminAdmin123*Sucursal Bolonia - Central (Managua)Admin IndependienteadminleonLeon123*Sucursal León📌 Controladores Principales/api/auth: Autenticación JWT y validación de tokens./api/proformas: Recepción multipaquete, liquidación y despacho inter-sucursal./api/clientes: Directorio de clientes con aislamiento por sede./api/finanzas: Control de gastos operativos y balances de utilidad./api/auditoria: Bitácora cronológica inmutable de acciones./api/exportacion: Manifiestos de paquetería de exportación (FedEx USA)./api/usuarios: Gestión de cuentas y asignación de roles.
