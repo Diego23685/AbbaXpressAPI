@@ -76,4 +76,22 @@ namespace AbbaXpress.API.DTOs
         public DateTime? FechaFacturacion { get; set; }
         public List<PaqueteResponseDto> Paquetes { get; set; } = new();
     }
+
+    public class PaqueteRecepcionLeonDto
+    {
+        public int Id { get; set; }
+        public decimal PesoLbs { get; set; }
+        public decimal TarifaAplicada { get; set; }
+    }
+
+    public class RecepcionLeonDto
+    {
+        [Required(ErrorMessage = "Debe seleccionar un cliente de la sucursal")]
+        public int ClienteId { get; set; }
+
+        public string MetodoPago { get; set; } = "CREDITO";
+        public decimal CargoDeliveryUSD { get; set; } = 0.00m;
+        public decimal DescuentoUSD { get; set; } = 0.00m;
+        public List<PaqueteRecepcionLeonDto> Paquetes { get; set; } = new();
+    }
 }

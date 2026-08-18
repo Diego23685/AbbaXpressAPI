@@ -481,6 +481,122 @@ namespace AbbaXpress.API.Controllers
             return Ok(new { message = $"Proforma {proforma.NumeroProforma} liquidada exitosamente." });
         }
 
+        // PUT: api/proformas/5/procesar-recepcion-leon
+        [HttpPut("{id}/procesar-recepcion-leon")]
+        public async Task<IActionResult> ProcesarRecepcionLeon(int id, [FromBody] RecepcionLeonDto dto)
+        {
+            var sucursalClaim = User.FindFirstValue("SucursalId");
+            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
+            int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
+
+            if (miSucursalId != 3 && userRole != "SUPER_ADMIN")
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Solo la sucursal de León puede procesar transferencias recibidas." });
+
+            var proformaOriginal = await _context.Proformas
+                .Include(p => p.Paquetes)
+                .Include(p => p.Cliente)
+                .FirstOrDefaultAsync(p => p.Id == id && p.SucursalDestinoId == 3);
+
+            if (proformaOriginal == null)
+                return NotFound(new { message = "Proforma no encontrada o no tiene como destino León." });
+
+            var clienteLeon = await _context.Clientes.FindAsync(dto.ClienteId);
+            if (clienteLeon == null)
+                return BadRequest(new { message = "El cliente seleccionado en León no existe." });
+
+            var configLeon = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == 3)
+                            ?? new ConfiguracionSucursal { SucursalId = 3 };
+
+            // 1. La remisión de Managua queda RECIBIDA EN DESTINO (No facturada aún; pendiente de cobro manual a León)
+            proformaOriginal.Estado = "RECIBIDO_BODEGA_LOCAL";
+            proformaOriginal.FechaFacturacion = null;
+
+            // 2. Crear la NUEVA proforma local en León para el cliente final
+            var totalProformas = await _context.Proformas.CountAsync();
+            string correlativoLeon = $"ABBA-{1001 + totalProformas}";
+
+            decimal totalLibras = 0;
+            decimal subtotalCargaUSD = 0;
+            decimal totalCostoProveedorUSD = 0;
+
+            var nuevosPaquetesLeon = new List<Paquete>();
+
+            foreach (var itemOriginal in proformaOriginal.Paquetes)
+            {
+                var pkgDto = dto.Paquetes.FirstOrDefault(p => p.Id == itemOriginal.Id);
+                decimal peso = pkgDto != null && pkgDto.PesoLbs > 0 ? pkgDto.PesoLbs : itemOriginal.PesoLbs;
+                decimal tarifa = pkgDto != null && pkgDto.TarifaAplicada > 0 ? pkgDto.TarifaAplicada : itemOriginal.TarifaAplicada;
+
+                decimal subtotal = (itemOriginal.Categoria == "CELULAR" || itemOriginal.Categoria == "PALLET")
+                    ? tarifa
+                    : peso * tarifa;
+
+                totalLibras += peso;
+                subtotalCargaUSD += subtotal;
+                totalCostoProveedorUSD += itemOriginal.TarifaAplicada; // Costo para León = lo que Managua le cobra
+
+                nuevosPaquetesLeon.Add(new Paquete
+                {
+                    Tracking = itemOriginal.Tracking,
+                    Label = itemOriginal.Label,
+                    PesoLbs = peso,
+                    ViaEnvio = itemOriginal.ViaEnvio,
+                    Categoria = itemOriginal.Categoria,
+                    TarifaAplicada = tarifa,
+                    CostoProveedor = itemOriginal.TarifaAplicada,
+                    SubtotalUSD = subtotal
+                });
+            }
+
+            decimal totalFinalCobradoUSD = Math.Max(0, (subtotalCargaUSD + dto.CargoDeliveryUSD) - dto.DescuentoUSD);
+            string estadoInicial = dto.MetodoPago == "CREDITO" ? "PENDIENTE_PAGO" : "FACTURADO";
+            DateTime? fechaFacturacion = dto.MetodoPago == "CREDITO" ? null : DateTime.UtcNow;
+
+            var nuevaProformaLeon = new Proforma
+            {
+                NumeroProforma = correlativoLeon,
+                ClienteId = clienteLeon.Id,
+                SucursalOrigenId = 3, // Sucursal León
+                SucursalDestinoId = 3,
+                UsuarioCreacionId = usuarioId,
+                Estado = estadoInicial,
+                MetodoPago = dto.MetodoPago,
+                TotalLbs = totalLibras,
+                CargoDeliveryUSD = dto.CargoDeliveryUSD,
+                DescuentoUSD = dto.DescuentoUSD,
+                TotalCobradoUSD = totalFinalCobradoUSD,
+                TotalCostoProveedorUSD = totalCostoProveedorUSD,
+                TipoCambioAplicado = configLeon.TipoCambioNIO,
+                FechaRegistro = DateTime.UtcNow,
+                FechaFacturacion = fechaFacturacion,
+                Paquetes = nuevosPaquetesLeon
+            };
+
+            _context.Proformas.Add(nuevaProformaLeon);
+
+            // Registro de auditoría
+            _context.LogsAuditoria.Add(new LogAuditoria
+            {
+                SucursalId = 3,
+                UsuarioId = usuarioId,
+                Accion = "CREACION",
+                Modulo = "PROFORMAS",
+                Descripcion = $"El usuario {nombreUsuario} recepcionó traslado #{proformaOriginal.NumeroProforma} (quedando por liquidar B2B) y generó proforma local #{correlativoLeon} para '{clienteLeon.Nombre}'.",
+                FechaMovimiento = DateTime.UtcNow
+            });
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { 
+                message = $"Carga recepcionada. Se generó la proforma local #{correlativoLeon} para {clienteLeon.Nombre}.",
+                proformaId = nuevaProformaLeon.Id,
+                numero = nuevaProformaLeon.NumeroProforma
+            });
+        }
+
         private (bool EsValido, List<int> TargetIds, ActionResult? ErrorResult) ValidarAlcanceSucursales(int? sucursalIdParam)
         {
             var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;

@@ -21,22 +21,23 @@ namespace AbbaXpress.API.Controllers
         }
 
         // GET: api/clientes
+        // GET: api/clientes
         [HttpGet]
         public async Task<ActionResult<IEnumerable<ClienteResponseDto>>> GetClientes([FromQuery] string? busqueda)
         {
-            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
             var query = _context.Clientes.Where(c => c.Activo).AsQueryable();
 
-            if (userRole == "SUPER_ADMIN")
+            // Aislamiento estricto y definitivo:
+            if (miSucursalId == 3) // Si el usuario es de León
             {
-                // El Super Admin puede ver todas las sedes
+                query = query.Where(c => c.SucursalId == 3);
             }
-            else
+            else // Managua (Bolonia 1 y Doral 2, incluidos Super Admin y Admin Sede)
             {
-                query = query.Where(c => c.SucursalId == miSucursalId);
+                query = query.Where(c => c.SucursalId == 1 || c.SucursalId == 2);
             }
 
             if (!string.IsNullOrWhiteSpace(busqueda))
@@ -82,8 +83,15 @@ namespace AbbaXpress.API.Controllers
             if (cliente == null || !cliente.Activo)
                 return NotFound(new { message = "Cliente no encontrado" });
 
-            if (userRole != "SUPER_ADMIN" && cliente.SucursalId != miSucursalId) 
-                return Forbid();
+            // Validación cruzada
+            if (userRole != "SUPER_ADMIN")
+            {
+                bool esLeon = miSucursalId == 3;
+                bool clienteEsLeon = cliente.SucursalId == 3;
+
+                if (esLeon != clienteEsLeon)
+                    return Forbid();
+            }
 
             return Ok(new ClienteResponseDto
             {
@@ -117,7 +125,7 @@ namespace AbbaXpress.API.Controllers
 
             var nuevoCliente = new Cliente
             {
-                SucursalId = miSucursalId,
+                SucursalId = miSucursalId, // Queda asignado a la sede del usuario que lo registra
                 Nombre = dto.Nombre.Trim(),
                 CodigoPais = dto.CodigoPais,
                 Telefono = dto.Telefono.Trim(),
@@ -132,7 +140,6 @@ namespace AbbaXpress.API.Controllers
 
             _context.Clientes.Add(nuevoCliente);
 
-            // Registro de auditoría por creación
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = miSucursalId,
@@ -179,8 +186,14 @@ namespace AbbaXpress.API.Controllers
             if (cliente == null)
                 return NotFound(new { message = "Cliente no encontrado" });
 
-            if (userRole != "SUPER_ADMIN" && cliente.SucursalId != miSucursalId) 
-                return Forbid();
+            if (userRole != "SUPER_ADMIN")
+            {
+                bool esLeon = miSucursalId == 3;
+                bool clienteEsLeon = cliente.SucursalId == 3;
+
+                if (esLeon != clienteEsLeon)
+                    return Forbid();
+            }
 
             cliente.Nombre = dto.Nombre.Trim();
             cliente.CodigoPais = dto.CodigoPais;
@@ -192,7 +205,6 @@ namespace AbbaXpress.API.Controllers
             cliente.TipoCliente = dto.TipoCliente;
             cliente.Activo = dto.Activo;
 
-            // Registro de auditoría por modificación
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = cliente.SucursalId,
@@ -223,12 +235,17 @@ namespace AbbaXpress.API.Controllers
             if (cliente == null)
                 return NotFound(new { message = "Cliente no encontrado" });
 
-            if (userRole != "SUPER_ADMIN" && cliente.SucursalId != miSucursalId) 
-                return Forbid();
+            if (userRole != "SUPER_ADMIN")
+            {
+                bool esLeon = miSucursalId == 3;
+                bool clienteEsLeon = cliente.SucursalId == 3;
+
+                if (esLeon != clienteEsLeon)
+                    return Forbid();
+            }
 
             cliente.Activo = false;
 
-            // Registro de auditoría por eliminación lógica
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = cliente.SucursalId,
@@ -240,7 +257,6 @@ namespace AbbaXpress.API.Controllers
             });
 
             await _context.SaveChangesAsync();
-
             return NoContent();
         }
     }
