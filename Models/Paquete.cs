@@ -38,6 +38,13 @@ namespace AbbaXpress.API.Models
         [Column(TypeName = "decimal(10,2)")]
         public decimal CostoProveedor { get; set; } = 0.00m; // Costo directo AereoMar
 
+        // Dentro de Paquete.cs
+        public int? ProveedorId { get; set; }
+        [ForeignKey("ProveedorId")]
+        public Proveedor? Proveedor { get; set; }
+
+        // Se descarta o ignora Label
+
         [Column(TypeName = "decimal(10,2)")]
         public decimal SubtotalUSD { get; set; } = 0.00m; // Monto final facturado del paquete
     }

@@ -321,9 +321,9 @@ namespace AbbaXpress.API.Controllers
             });
         }
 
-        // POST: api/proformas
+        // POST: api/proformas (Recepción de Carga)
         [HttpPost]
-        public async Task<ActionResult<ProformaResponseDto>> CreateProforma([FromBody] ProformaCreateDto dto)
+        public async Task<ActionResult<object>> CreateProforma([FromBody] RecepcionCargaDto dto)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
@@ -338,12 +338,16 @@ namespace AbbaXpress.API.Controllers
 
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
             int sucursalOrigenId = int.TryParse(sucursalIdClaim, out int sId) ? sId : 1;
-            int sucursalDestinoId = dto.SucursalDestinoId > 0 ? dto.SucursalDestinoId : sucursalOrigenId;
+
+            // Detección automática de Carga hacia León
+            bool esParaLeon = dto.SucursalDestinoId == 3 || cliente.TipoCliente == "SUBAGENCIA" || cliente.Nombre.Contains("León");
+            int sucursalDestinoId = esParaLeon ? 3 : sucursalOrigenId;
 
             int configSucursalId = sucursalOrigenId == 2 ? 1 : sucursalOrigenId;
-
-            var config = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == configSucursalId) 
+            var config = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == configSucursalId)
                         ?? new ConfiguracionSucursal { SucursalId = sucursalOrigenId };
+
+            var proveedores = await _context.Proveedores.Where(p => p.Activo).ToDictionaryAsync(p => p.Id);
 
             var totalProformas = await _context.Proformas.CountAsync();
             string numeroCorrelativo = $"ABBA-{1001 + totalProformas}";
@@ -356,60 +360,61 @@ namespace AbbaXpress.API.Controllers
 
             foreach (var item in dto.Paquetes)
             {
+                // Determinar costo de proveedor por paquete
+                decimal costoProveedorLibra = item.ViaEnvio == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo;
+                if (item.ProveedorId.HasValue && proveedores.TryGetValue(item.ProveedorId.Value, out var prov))
+                {
+                    costoProveedorLibra = item.ViaEnvio == "MARITIMO" ? prov.CostoLibraMaritimo : prov.CostoLibraAereo;
+                }
+
+                decimal costoProveedorTotal = item.PesoLbs * costoProveedorLibra;
                 decimal tarifa = 0;
-                decimal costoProveedor = 0;
                 decimal subtotalItem = 0;
 
                 switch (item.Categoria.ToUpper())
                 {
                     case "CELULAR":
-                        tarifa = item.TarifaManual ?? config.TarifaCelularFija;
-                        costoProveedor = item.CostoProveedorManual ?? 15.00m;
+                        tarifa = item.TarifaManual ?? cliente.TarifaCelularFija ?? config.TarifaCelularFija;
+                        costoProveedorTotal = 15.00m;
                         subtotalItem = tarifa;
                         break;
 
                     case "SMART_TV":
-                        tarifa = item.TarifaManual ?? (item.ViaEnvio == "MARITIMO" ? config.TarifaTvMaritimo : config.TarifaTvAereo);
-                        costoProveedor = item.CostoProveedorManual ?? (item.ViaEnvio == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo);
+                        tarifa = item.TarifaManual ?? (item.ViaEnvio == "MARITIMO" 
+                            ? (cliente.TarifaTvMaritimo ?? config.TarifaTvMaritimo) 
+                            : (cliente.TarifaTvAereo ?? config.TarifaTvAereo));
                         subtotalItem = item.PesoLbs * tarifa;
                         break;
 
                     case "PALLET":
                         tarifa = item.TarifaManual ?? 0.00m;
-                        costoProveedor = item.CostoProveedorManual ?? 0.00m;
                         subtotalItem = tarifa;
                         break;
 
                     default:
                         tarifa = item.TarifaManual ?? (item.ViaEnvio == "MARITIMO" ? cliente.TarifaMaritimo : cliente.TarifaAereo);
-                        costoProveedor = item.CostoProveedorManual ?? (item.ViaEnvio == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo);
                         subtotalItem = item.PesoLbs * tarifa;
                         break;
                 }
 
                 totalLibras += item.PesoLbs;
                 subtotalCargaUSD += subtotalItem;
-                totalCostoProveedorUSD += costoProveedor;
+                totalCostoProveedorUSD += costoProveedorTotal;
 
                 nuevosPaquetes.Add(new Paquete
                 {
                     Tracking = item.Tracking.Trim().ToUpper(),
-                    Label = item.Label,
                     PesoLbs = item.PesoLbs,
                     ViaEnvio = item.ViaEnvio.ToUpper(),
                     Categoria = item.Categoria.ToUpper(),
                     TarifaAplicada = tarifa,
-                    CostoProveedor = costoProveedor,
+                    ProveedorId = item.ProveedorId,
+                    CostoProveedor = costoProveedorTotal,
                     SubtotalUSD = subtotalItem
                 });
             }
 
-            decimal totalFinalCobradoUSD = (subtotalCargaUSD + dto.CargoDeliveryUSD) - dto.DescuentoUSD;
-            if (totalFinalCobradoUSD < 0) totalFinalCobradoUSD = 0;
-
-            string estadoInicial = dto.MetodoPago == "CREDITO" ? "PENDIENTE_PAGO" : "FACTURADO";
-            DateTime? fechaFacturacion = dto.MetodoPago == "CREDITO" ? null : DateTime.UtcNow;
-
+            // REGLA OBLIGATORIA: En recepción entra SIEMPRE como PENDIENTE_PAGO y sin delivery
             var proforma = new Proforma
             {
                 NumeroProforma = numeroCorrelativo,
@@ -417,68 +422,185 @@ namespace AbbaXpress.API.Controllers
                 SucursalOrigenId = sucursalOrigenId,
                 SucursalDestinoId = sucursalDestinoId,
                 UsuarioCreacionId = usuarioId,
-                Estado = estadoInicial,
-                MetodoPago = dto.MetodoPago,
+                Estado = "PENDIENTE_PAGO",
+                MetodoPago = "CREDITO",
                 TotalLbs = totalLibras,
-                CargoDeliveryUSD = dto.CargoDeliveryUSD,
-                DescuentoUSD = dto.DescuentoUSD,
-                TotalCobradoUSD = totalFinalCobradoUSD,
+                CargoDeliveryUSD = 0.00m,
+                DescuentoUSD = 0.00m,
+                TotalCobradoUSD = subtotalCargaUSD,
                 TotalCostoProveedorUSD = totalCostoProveedorUSD,
-                TipoCambioAplicado = dto.TipoCambio > 0 ? dto.TipoCambio : config.TipoCambioNIO,
+                TipoCambioAplicado = config.TipoCambioNIO,
+                EsCargaInterSucursal = esParaLeon,
                 FechaRegistro = DateTime.UtcNow,
-                FechaFacturacion = fechaFacturacion,
+                FechaFacturacion = null,
                 Paquetes = nuevosPaquetes
             };
 
             _context.Proformas.Add(proforma);
 
-            // Registro de auditoría por creación de proforma
+            // Si es carga para León generada en Managua, emitir la notificación de campanilla
+            if (esParaLeon && sucursalOrigenId != 3)
+            {
+                _context.NotificacionesSucursales.Add(new NotificacionSucursal
+                {
+                    SucursalDestinoId = 3,
+                    Proforma = proforma,
+                    Mensaje = $"Managua registró nueva paquetería para León (#{numeroCorrelativo} - {totalLibras:F2} lbs).",
+                    Leida = false,
+                    FechaCreacion = DateTime.UtcNow
+                });
+            }
+
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = sucursalOrigenId,
                 UsuarioId = usuarioId,
                 Accion = "CREACION",
-                Modulo = "PROFORMAS",
-                Descripcion = $"El usuario {nombreUsuario} registró la proforma #{numeroCorrelativo} para {cliente.Nombre} ({totalLibras:F2} lbs, {nuevosPaquetes.Count} paquetes, Total: ${totalFinalCobradoUSD:F2} USD - {dto.MetodoPago}).",
+                Modulo = "RECEPCION",
+                Descripcion = $"Recepción de {nuevosPaquetes.Count} bultos (#{numeroCorrelativo}) para '{cliente.Nombre}'. Destino: {(esParaLeon ? "León" : "Managua")}.",
                 FechaMovimiento = DateTime.UtcNow
             });
 
             await _context.SaveChangesAsync();
 
-            return Ok(new { message = "Proforma registrada con éxito", proformaId = proforma.Id, numero = proforma.NumeroProforma });
+            return Ok(new
+            {
+                message = "Carga recepcionada correctamente.",
+                proformaId = proforma.Id,
+                numeroProforma = proforma.NumeroProforma,
+                totalLibras = proforma.TotalLbs,
+                totalCobradoUSD = proforma.TotalCobradoUSD
+            });
         }
 
-        // PUT: api/proformas/5/liquidar
+        // PUT: api/proformas/5/liquidar (Cobro y Facturación Final)
         [HttpPut("{id}/liquidar")]
-        public async Task<IActionResult> LiquidarProforma(int id, [FromBody] string metodoPago)
+        public async Task<IActionResult> LiquidarProforma(int id, [FromBody] LiquidarProformaDto dto)
         {
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var sucursalClaim = User.FindFirstValue("SucursalId");
             var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
+
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            var proforma = await _context.Proformas.FindAsync(id);
+            var proforma = await _context.Proformas
+                .Include(p => p.Cliente)
+                .Include(p => p.Paquetes)
+                .FirstOrDefaultAsync(p => p.Id == id);
+
             if (proforma == null)
                 return NotFound(new { message = "Proforma no encontrada." });
 
-            proforma.Estado = "FACTURADO";
-            proforma.MetodoPago = metodoPago;
-            proforma.FechaFacturacion = DateTime.UtcNow;
+            // Validar que exista caja abierta en la sucursal del cajero
+            var sesionCaja = await _context.SesionesCaja
+                .FirstOrDefaultAsync(s => s.SucursalId == miSucursalId && s.Estado == "ABIERTA");
 
-            // Registro de auditoría por cobro/liquidación de proforma
+            if (sesionCaja == null)
+                return BadRequest(new { message = "Operación denegada: Debe aperturar caja antes de cobrar y facturar paquetes." });
+
+            // Aplicar delivery y descuentos finales acordados al entregar
+            decimal totalFlete = proforma.Paquetes.Sum(p => p.SubtotalUSD);
+            decimal totalFinalUSD = Math.Max(0, (totalFlete + dto.CargoDeliveryUSD) - dto.DescuentoUSD);
+
+            // Tratamiento según Método de Pago
+            proforma.MetodoPago = dto.MetodoPago.ToUpper();
+            proforma.CargoDeliveryUSD = dto.CargoDeliveryUSD;
+            proforma.DescuentoUSD = dto.DescuentoUSD;
+            proforma.TotalCobradoUSD = totalFinalUSD;
+            proforma.Estado = "FACTURADO";
+            proforma.FechaFacturacion = DateTime.UtcNow;
+            proforma.SesionCajaId = sesionCaja.Id;
+
+            // Retención comisión POS
+            if (dto.MetodoPago.ToUpper() == "POS")
+            {
+                proforma.PorcentajeComisionPOS = dto.PorcentajeComisionPOS;
+                proforma.MontoComisionPOS = totalFinalUSD * (dto.PorcentajeComisionPOS / 100m);
+            }
+
+            // Vuelto en efectivo
+            Dictionary<decimal, int>? desgloseVuelto = null;
+            if (dto.MetodoPago.StartsWith("EFECTIVO"))
+            {
+                decimal totalPagarEnMoneda = dto.MonedaPagoEfectivo == "NIO" 
+                    ? totalFinalUSD * proforma.TipoCambioAplicado 
+                    : totalFinalUSD;
+
+                if (dto.MontoRecibidoEfectivo < totalPagarEnMoneda)
+                    return BadRequest(new { message = $"Monto recibido ({dto.MontoRecibidoEfectivo}) es menor al total a cobrar ({totalPagarEnMoneda:F2})." });
+
+                decimal vuelto = dto.MontoRecibidoEfectivo - totalPagarEnMoneda;
+                proforma.MontoRecibidoEfectivo = dto.MontoRecibidoEfectivo;
+                proforma.MontoVueltoEntregado = vuelto;
+                desgloseVuelto = CalcularDesgloseVuelto(vuelto, dto.MonedaPagoEfectivo);
+            }
+
+            // CONTABILIDAD INTER-SUCURSAL: Si Managua le cobra a la Subagencia León
+            if ((miSucursalId == 1 || miSucursalId == 2) && (proforma.SucursalDestinoId == 3 || proforma.EsCargaInterSucursal))
+            {
+                var gastoLeon = new GastoOperativo
+                {
+                    SucursalId = 3, // Sucursal León
+                    UsuarioId = usuarioId,
+                    Categoria = "FLETE_MANAGUA",
+                    Descripcion = $"Costo flete Managua s/ Factura #{proforma.NumeroProforma} ({proforma.Cliente?.Nombre})",
+                    MontoUSD = totalFinalUSD,
+                    TipoCambioAplicado = proforma.TipoCambioAplicado,
+                    MetodoPago = proforma.MetodoPago,
+                    NumeroComprobante = proforma.NumeroProforma,
+                    FechaGasto = DateTime.UtcNow
+                };
+
+                _context.GastosOperativos.Add(gastoLeon);
+                await _context.SaveChangesAsync();
+
+                proforma.GastoGeneradoLeonId = gastoLeon.Id;
+            }
+
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = miSucursalId,
                 UsuarioId = usuarioId,
                 Accion = "COBRO",
-                Modulo = "PROFORMAS",
-                Descripcion = $"El usuario {nombreUsuario} liquidó y cobró la proforma #{proforma.NumeroProforma} por un monto de ${proforma.TotalCobradoUSD:F2} USD vía {metodoPago}.",
+                Modulo = "FACTURACION",
+                Descripcion = $"Cobro exitoso de proforma #{proforma.NumeroProforma} por ${totalFinalUSD:F2} USD ({dto.MetodoPago}).",
                 FechaMovimiento = DateTime.UtcNow
             });
 
             await _context.SaveChangesAsync();
-            return Ok(new { message = $"Proforma {proforma.NumeroProforma} liquidada exitosamente." });
+
+            return Ok(new
+            {
+                message = $"Factura #{proforma.NumeroProforma} cobrada exitosamente.",
+                totalCobradoUSD = totalFinalUSD,
+                vuelto = proforma.MontoVueltoEntregado,
+                desgloseBilletesSugerido = desgloseVuelto
+            });
+        }
+
+        private static Dictionary<decimal, int> CalcularDesgloseVuelto(decimal vueltoTotal, string moneda)
+        {
+            var desglose = new Dictionary<decimal, int>();
+            if (vueltoTotal <= 0) return desglose;
+
+            decimal[] denominaciones = moneda == "NIO" 
+                ? new decimal[] { 1000m, 500m, 200m, 100m, 50m, 20m, 10m, 5m, 1m }
+                : new decimal[] { 100m, 50m, 20m, 10m, 5m, 1m };
+
+            decimal restante = Math.Round(vueltoTotal, 2);
+
+            foreach (var d in denominaciones)
+            {
+                if (restante >= d)
+                {
+                    int cant = (int)(restante / d);
+                    desglose.Add(d, cant);
+                    restante %= d;
+                }
+            }
+
+            return desglose;
         }
 
         // PUT: api/proformas/5/procesar-recepcion-leon

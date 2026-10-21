@@ -31,7 +31,17 @@ namespace AbbaXpress.API.Models
 
         public string? Direccion { get; set; }
 
-        public string TipoCliente { get; set; } = "CONSUMIDOR_FINAL";
+        // Dentro de Cliente.cs
+        public string TipoCliente { get; set; } = "CLIENTE_GENERAL"; // CLIENTE_GENERAL, CLIENTE_MAYORISTA, SUBAGENCIA
+
+        [Column(TypeName = "decimal(10,2)")]
+        public decimal? TarifaCelularFija { get; set; }
+
+        [Column(TypeName = "decimal(10,2)")]
+        public decimal? TarifaTvAereo { get; set; }
+
+        [Column(TypeName = "decimal(10,2)")]
+        public decimal? TarifaTvMaritimo { get; set; }
 
         public bool Activo { get; set; } = true;
 

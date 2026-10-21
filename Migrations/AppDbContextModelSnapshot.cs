@@ -51,12 +51,21 @@ namespace AbbaXpress.API.Migrations
                     b.Property<decimal>("TarifaAereo")
                         .HasColumnType("decimal(10,2)");
 
+                    b.Property<decimal?>("TarifaCelularFija")
+                        .HasColumnType("decimal(10,2)");
+
                     b.Property<decimal>("TarifaMaritimo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal?>("TarifaTvAereo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal?>("TarifaTvMaritimo")
                         .HasColumnType("decimal(10,2)");
 
                     b.Property<string>("Telefono")
                         .IsRequired()
-                        .HasColumnType("longtext");
+                        .HasColumnType("varchar(255)");
 
                     b.Property<string>("TipoCliente")
                         .IsRequired()
@@ -65,6 +74,8 @@ namespace AbbaXpress.API.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("SucursalId");
+
+                    b.HasIndex("Telefono");
 
                     b.ToTable("Clientes");
 
@@ -80,25 +91,69 @@ namespace AbbaXpress.API.Migrations
                             Nombre = "Juan Carlos Pérez",
                             SucursalId = 1,
                             TarifaAereo = 7.00m,
+                            TarifaCelularFija = 35.00m,
                             TarifaMaritimo = 4.00m,
+                            TarifaTvAereo = 7.50m,
+                            TarifaTvMaritimo = 3.50m,
                             Telefono = "88997711",
-                            TipoCliente = "CONSUMIDOR_FINAL"
+                            TipoCliente = "CLIENTE_GENERAL"
                         },
                         new
                         {
                             Id = 2,
                             Activo = true,
                             CodigoPais = "+505",
-                            Direccion = "León, Parque Central 1c al norte",
-                            Email = "leon@tienditaabba.com",
+                            Direccion = "De la estatua de la madre 1c y media al norte",
+                            Email = "leon@abbaexpress.com",
                             FechaRegistro = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Nombre = "Sucursal León (Mayorista B2B)",
+                            Nombre = "Sucursal León (Subagencia)",
                             SucursalId = 1,
                             TarifaAereo = 5.50m,
+                            TarifaCelularFija = 30.00m,
                             TarifaMaritimo = 3.00m,
+                            TarifaTvAereo = 6.50m,
+                            TarifaTvMaritimo = 3.00m,
                             Telefono = "87654321",
-                            TipoCliente = "SUCURSAL_B2B"
+                            TipoCliente = "SUBAGENCIA"
                         });
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.ConfiguracionGlobal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("CostoProveedorAereo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("CostoProveedorMaritimo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("TarifaAereoGeneral")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("TarifaCelularFija")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("TarifaMaritimoGeneral")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("TarifaTvAereo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("TarifaTvMaritimo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("TipoCambioNIO")
+                        .HasColumnType("decimal(10,4)");
+
+                    b.Property<DateTime>("UltimaModificacion")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ConfiguracionesGlobales");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.ConfiguracionSucursal", b =>
@@ -172,6 +227,38 @@ namespace AbbaXpress.API.Migrations
                             TipoCambioNIO = 36.6243m,
                             UltimaModificacion = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.DenominacionCaja", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    b.Property<int>("Cantidad")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("Denominacion")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<string>("Momento")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("Moneda")
+                        .IsRequired()
+                        .HasMaxLength(5)
+                        .HasColumnType("varchar(5)");
+
+                    b.Property<int>("SesionCajaId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SesionCajaId");
+
+                    b.ToTable("DenominacionesCaja");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.EnvioExportacion", b =>
@@ -394,6 +481,84 @@ namespace AbbaXpress.API.Migrations
                     b.ToTable("LogsAuditoria");
                 });
 
+            modelBuilder.Entity("AbbaXpress.API.Models.MovimientoCaja", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    b.Property<string>("Beneficiario")
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)");
+
+                    b.Property<string>("Concepto")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<DateTime>("FechaRegistro")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Moneda")
+                        .IsRequired()
+                        .HasMaxLength(5)
+                        .HasColumnType("varchar(5)");
+
+                    b.Property<decimal>("Monto")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<int>("SesionCajaId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TipoMovimiento")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<int>("UsuarioId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SesionCajaId");
+
+                    b.HasIndex("UsuarioId");
+
+                    b.ToTable("MovimientosCaja");
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.NotificacionSucursal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("FechaCreacion")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("Leida")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Mensaje")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int?>("ProformaId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SucursalDestinoId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProformaId");
+
+                    b.HasIndex("SucursalDestinoId");
+
+                    b.ToTable("NotificacionesSucursales");
+                });
+
             modelBuilder.Entity("AbbaXpress.API.Models.Paquete", b =>
                 {
                     b.Property<int>("Id")
@@ -418,6 +583,9 @@ namespace AbbaXpress.API.Migrations
                     b.Property<int>("ProformaId")
                         .HasColumnType("int");
 
+                    b.Property<int?>("ProveedorId")
+                        .HasColumnType("int");
+
                     b.Property<decimal>("SubtotalUSD")
                         .HasColumnType("decimal(10,2)");
 
@@ -438,6 +606,10 @@ namespace AbbaXpress.API.Migrations
 
                     b.HasIndex("ProformaId");
 
+                    b.HasIndex("ProveedorId");
+
+                    b.HasIndex("Tracking");
+
                     b.ToTable("Paquetes");
                 });
 
@@ -456,6 +628,9 @@ namespace AbbaXpress.API.Migrations
                     b.Property<decimal>("DescuentoUSD")
                         .HasColumnType("decimal(10,2)");
 
+                    b.Property<bool>("EsCargaInterSucursal")
+                        .HasColumnType("tinyint(1)");
+
                     b.Property<string>("Estado")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -467,15 +642,33 @@ namespace AbbaXpress.API.Migrations
                     b.Property<DateTime>("FechaRegistro")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<int?>("GastoGeneradoLeonId")
+                        .HasColumnType("int");
+
                     b.Property<string>("MetodoPago")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("varchar(30)");
 
+                    b.Property<decimal>("MontoComisionPOS")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("MontoRecibidoEfectivo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("MontoVueltoEntregado")
+                        .HasColumnType("decimal(10,2)");
+
                     b.Property<string>("NumeroProforma")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("varchar(30)");
+
+                    b.Property<decimal>("PorcentajeComisionPOS")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<int?>("SesionCajaId")
+                        .HasColumnType("int");
 
                     b.Property<int>("SucursalDestinoId")
                         .HasColumnType("int");
@@ -502,6 +695,12 @@ namespace AbbaXpress.API.Migrations
 
                     b.HasIndex("ClienteId");
 
+                    b.HasIndex("GastoGeneradoLeonId");
+
+                    b.HasIndex("NumeroProforma");
+
+                    b.HasIndex("SesionCajaId");
+
                     b.HasIndex("SucursalDestinoId");
 
                     b.HasIndex("SucursalOrigenId");
@@ -509,6 +708,110 @@ namespace AbbaXpress.API.Migrations
                     b.HasIndex("UsuarioCreacionId");
 
                     b.ToTable("Proformas");
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.Proveedor", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    b.Property<bool>("Activo")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Contacto")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<decimal>("CostoLibraAereo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("CostoLibraMaritimo")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<DateTime>("FechaRegistro")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)");
+
+                    b.Property<string>("Telefono")
+                        .HasMaxLength(25)
+                        .HasColumnType("varchar(25)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Proveedores");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Activo = true,
+                            Contacto = "Soporte Carga",
+                            CostoLibraAereo = 3.80m,
+                            CostoLibraMaritimo = 1.50m,
+                            FechaRegistro = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Nombre = "AereoMar Express",
+                            Telefono = "+1 305-555-0199"
+                        });
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.SesionCaja", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    b.Property<int>("BultosFisicosApertura")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("BultosFisicosCierre")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Estado")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime>("FechaApertura")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("FechaCierre")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<decimal>("MontoAperturaCordobas")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal>("MontoAperturaDolares")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal?>("MontoCierreCordobas")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal?>("MontoCierreDolares")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<int>("SucursalId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UsuarioAperturaId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("UsuarioCierreId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SucursalId");
+
+                    b.HasIndex("UsuarioAperturaId");
+
+                    b.HasIndex("UsuarioCierreId");
+
+                    b.ToTable("SesionesCaja");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.Sucursal", b =>
@@ -556,8 +859,8 @@ namespace AbbaXpress.API.Migrations
                             Id = 1,
                             Activa = true,
                             Ciudad = "Managua",
-                            Direccion = "Bolonia, de Plaza España 1c al oeste",
-                            FechaRegistro = new DateTime(2026, 8, 14, 22, 10, 40, 403, DateTimeKind.Utc).AddTicks(7136),
+                            Direccion = "Rotonda El Güegüense, 4c abajo, 1c al norte y media c arriba. Plaza Kamelu, módulo 2",
+                            FechaRegistro = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Sucursal Bolonia - Central",
                             Telefono = "+505 2222-1111",
                             TipoSucursal = "PROPIA"
@@ -567,9 +870,9 @@ namespace AbbaXpress.API.Migrations
                             Id = 2,
                             Activa = true,
                             Ciudad = "Managua",
-                            Direccion = "Carretera Norte, Edificio Doral",
-                            FechaRegistro = new DateTime(2026, 8, 14, 22, 10, 40, 403, DateTimeKind.Utc).AddTicks(7143),
-                            Nombre = "Sucursal Doral",
+                            Direccion = "Avenida 15, calle 4, módulo P-14",
+                            FechaRegistro = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Nombre = "Sucursal Ciudad Doral",
                             Telefono = "+505 2222-2222",
                             TipoSucursal = "PROPIA"
                         },
@@ -578,8 +881,8 @@ namespace AbbaXpress.API.Migrations
                             Id = 3,
                             Activa = true,
                             Ciudad = "León",
-                            Direccion = "Parque Central 1c al norte",
-                            FechaRegistro = new DateTime(2026, 8, 14, 22, 10, 40, 403, DateTimeKind.Utc).AddTicks(7144),
+                            Direccion = "De la estatua de la madre 1c y media al norte",
+                            FechaRegistro = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Sucursal León",
                             Telefono = "+505 8765-4321",
                             TipoSucursal = "FRANQUICIA_B2B"
@@ -633,7 +936,7 @@ namespace AbbaXpress.API.Migrations
                             Activo = true,
                             FechaCreacion = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Junior Ramírez (Super Admin)",
-                            PasswordHash = "$2a$11$kFLS5kIjL/7.6CXaDYgBKuAMFQXctB1rkxkCXPGlDePE6XnlhGawG",
+                            PasswordHash = "$2a$11$eBh3HybZL/LWBWLrdahpXOxVAscjIFjBrDRrzFStCmDsWLATH2rQy",
                             Rol = "SUPER_ADMIN",
                             SucursalId = 1,
                             Username = "admin"
@@ -644,7 +947,7 @@ namespace AbbaXpress.API.Migrations
                             Activo = true,
                             FechaCreacion = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Admin Sucursal León",
-                            PasswordHash = "$2a$11$hvfGzTfXPawFALMIHRhIEOpnaOsxj4kBX2lWWUKG8Q/G9xnVkiB0q",
+                            PasswordHash = "$2a$11$6.0Z.Rm.bgB/Pi7GdTBA.uF84BD3SH5W8HtoHdTz3HYRXiH2dYduK",
                             Rol = "ADMIN_SUCURSAL_INDEPENDIENTE",
                             SucursalId = 3,
                             Username = "adminleon"
@@ -671,6 +974,17 @@ namespace AbbaXpress.API.Migrations
                         .IsRequired();
 
                     b.Navigation("Sucursal");
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.DenominacionCaja", b =>
+                {
+                    b.HasOne("AbbaXpress.API.Models.SesionCaja", "SesionCaja")
+                        .WithMany("Denominaciones")
+                        .HasForeignKey("SesionCajaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SesionCaja");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.EnvioExportacion", b =>
@@ -741,6 +1055,42 @@ namespace AbbaXpress.API.Migrations
                     b.Navigation("Usuario");
                 });
 
+            modelBuilder.Entity("AbbaXpress.API.Models.MovimientoCaja", b =>
+                {
+                    b.HasOne("AbbaXpress.API.Models.SesionCaja", "SesionCaja")
+                        .WithMany("Movimientos")
+                        .HasForeignKey("SesionCajaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AbbaXpress.API.Models.Usuario", "Usuario")
+                        .WithMany()
+                        .HasForeignKey("UsuarioId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SesionCaja");
+
+                    b.Navigation("Usuario");
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.NotificacionSucursal", b =>
+                {
+                    b.HasOne("AbbaXpress.API.Models.Proforma", "Proforma")
+                        .WithMany()
+                        .HasForeignKey("ProformaId");
+
+                    b.HasOne("AbbaXpress.API.Models.Sucursal", "SucursalDestino")
+                        .WithMany()
+                        .HasForeignKey("SucursalDestinoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Proforma");
+
+                    b.Navigation("SucursalDestino");
+                });
+
             modelBuilder.Entity("AbbaXpress.API.Models.Paquete", b =>
                 {
                     b.HasOne("AbbaXpress.API.Models.Proforma", "Proforma")
@@ -749,7 +1099,14 @@ namespace AbbaXpress.API.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("AbbaXpress.API.Models.Proveedor", "Proveedor")
+                        .WithMany()
+                        .HasForeignKey("ProveedorId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("Proforma");
+
+                    b.Navigation("Proveedor");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.Proforma", b =>
@@ -760,16 +1117,25 @@ namespace AbbaXpress.API.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("AbbaXpress.API.Models.GastoOperativo", "GastoGeneradoLeon")
+                        .WithMany()
+                        .HasForeignKey("GastoGeneradoLeonId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("AbbaXpress.API.Models.SesionCaja", "SesionCaja")
+                        .WithMany()
+                        .HasForeignKey("SesionCajaId");
+
                     b.HasOne("AbbaXpress.API.Models.Sucursal", "SucursalDestino")
                         .WithMany()
                         .HasForeignKey("SucursalDestinoId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("AbbaXpress.API.Models.Sucursal", "SucursalOrigen")
                         .WithMany()
                         .HasForeignKey("SucursalOrigenId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("AbbaXpress.API.Models.Usuario", "UsuarioCreacion")
@@ -780,11 +1146,41 @@ namespace AbbaXpress.API.Migrations
 
                     b.Navigation("Cliente");
 
+                    b.Navigation("GastoGeneradoLeon");
+
+                    b.Navigation("SesionCaja");
+
                     b.Navigation("SucursalDestino");
 
                     b.Navigation("SucursalOrigen");
 
                     b.Navigation("UsuarioCreacion");
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.SesionCaja", b =>
+                {
+                    b.HasOne("AbbaXpress.API.Models.Sucursal", "Sucursal")
+                        .WithMany()
+                        .HasForeignKey("SucursalId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AbbaXpress.API.Models.Usuario", "UsuarioApertura")
+                        .WithMany()
+                        .HasForeignKey("UsuarioAperturaId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("AbbaXpress.API.Models.Usuario", "UsuarioCierre")
+                        .WithMany()
+                        .HasForeignKey("UsuarioCierreId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Sucursal");
+
+                    b.Navigation("UsuarioApertura");
+
+                    b.Navigation("UsuarioCierre");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.Usuario", b =>
@@ -806,6 +1202,13 @@ namespace AbbaXpress.API.Migrations
             modelBuilder.Entity("AbbaXpress.API.Models.Proforma", b =>
                 {
                     b.Navigation("Paquetes");
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.SesionCaja", b =>
+                {
+                    b.Navigation("Denominaciones");
+
+                    b.Navigation("Movimientos");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.Sucursal", b =>

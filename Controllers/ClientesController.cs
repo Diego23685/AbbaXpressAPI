@@ -70,6 +70,59 @@ namespace AbbaXpress.API.Controllers
             return Ok(lista);
         }
 
+        // GET: api/clientes/5/historial-360
+        [HttpGet("{id}/historial-360")]
+        public async Task<ActionResult<object>> GetHistorialCliente360(int id)
+        {
+            var cliente = await _context.Clientes.FindAsync(id);
+            if (cliente == null) return NotFound(new { message = "Cliente no encontrado." });
+
+            var proformas = await _context.Proformas
+                .Include(p => p.Paquetes)
+                .Where(p => p.ClienteId == id)
+                .OrderByDescending(p => p.FechaRegistro)
+                .ToListAsync();
+
+            decimal totalFacturadoUSD = proformas.Where(p => p.Estado == "FACTURADO").Sum(p => p.TotalCobradoUSD);
+            decimal saldoPendienteUSD = proformas.Where(p => p.Estado == "PENDIENTE_PAGO").Sum(p => p.TotalCobradoUSD);
+            decimal totalLibrasMovidas = proformas.Sum(p => p.TotalLbs);
+            int totalPaquetes = proformas.Sum(p => p.Paquetes.Count);
+
+            return Ok(new
+            {
+                Cliente = new
+                {
+                    cliente.Id,
+                    cliente.Nombre,
+                    cliente.Telefono,
+                    cliente.TipoCliente,
+                    cliente.TarifaAereo,
+                    cliente.TarifaMaritimo,
+                    cliente.TarifaCelularFija,
+                    cliente.TarifaTvAereo,
+                    cliente.TarifaTvMaritimo
+                },
+                Metricas = new
+                {
+                    TotalFacturadoUSD = totalFacturadoUSD,
+                    SaldoPendienteUSD = saldoPendienteUSD,
+                    TotalLibrasMovidas = totalLibrasMovidas,
+                    TotalPaquetesMovidos = totalPaquetes,
+                    FrecuenciaEnvios = proformas.Count
+                },
+                UltimasProformas = proformas.Take(15).Select(p => new
+                {
+                    p.Id,
+                    p.NumeroProforma,
+                    p.Estado,
+                    p.TotalLbs,
+                    p.TotalCobradoUSD,
+                    p.FechaRegistro,
+                    p.FechaFacturacion
+                })
+            });
+        }
+
         // GET: api/clientes/5
         [HttpGet("{id}")]
         public async Task<ActionResult<ClienteResponseDto>> GetCliente(int id)
