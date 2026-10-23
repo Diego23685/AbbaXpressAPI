@@ -340,7 +340,17 @@ namespace AbbaXpress.API.Controllers
             int sucursalOrigenId = int.TryParse(sucursalIdClaim, out int sId) ? sId : 1;
 
             // Detección automática de Carga hacia León
-            bool esParaLeon = dto.SucursalDestinoId == 3 || cliente.TipoCliente == "SUBAGENCIA" || cliente.Nombre.Contains("León");
+            // Reemplaza la línea de detección de León por esta:
+            string nombreClienteUpper = cliente.Nombre.ToUpper();
+            string tipoClienteUpper = cliente.TipoCliente.ToUpper();
+
+            bool esParaLeon = dto.SucursalDestinoId == 3 
+                        || tipoClienteUpper == "SUBAGENCIA" 
+                        || tipoClienteUpper == "SUCURSAL_B2B"
+                        || tipoClienteUpper == "CLIENTE_MAYORISTA" && nombreClienteUpper.Contains("LEON")
+                        || nombreClienteUpper.Contains("LEON") 
+                        || nombreClienteUpper.Contains("LEÓN");
+
             int sucursalDestinoId = esParaLeon ? 3 : sucursalOrigenId;
 
             int configSucursalId = sucursalOrigenId == 2 ? 1 : sucursalOrigenId;
@@ -625,6 +635,12 @@ namespace AbbaXpress.API.Controllers
             if (proformaOriginal == null)
                 return NotFound(new { message = "Proforma no encontrada o no tiene como destino León." });
 
+            // VALIDACIÓN: Evitar que se asigne más de una vez
+            if (proformaOriginal.Estado == "PROCESADO_ASIGNADO" || proformaOriginal.Estado == "CERRADO_B2B")
+            {
+                return BadRequest(new { message = $"Esta remisión (#{proformaOriginal.NumeroProforma}) ya fue asignada previamente a un cliente local." });
+            }
+
             var clienteLeon = await _context.Clientes.FindAsync(dto.ClienteId);
             if (clienteLeon == null)
                 return BadRequest(new { message = "El cliente seleccionado en León no existe." });
@@ -632,9 +648,8 @@ namespace AbbaXpress.API.Controllers
             var configLeon = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == 3)
                             ?? new ConfiguracionSucursal { SucursalId = 3 };
 
-            // 1. La remisión de Managua queda RECIBIDA EN DESTINO (No facturada aún; pendiente de cobro manual a León)
-            proformaOriginal.Estado = "RECIBIDO_BODEGA_LOCAL";
-            proformaOriginal.FechaFacturacion = null;
+            // 1. Marcar la remisión original de Managua como COMPLETADA / ASIGNADA
+            proformaOriginal.Estado = "PROCESADO_ASIGNADO";
 
             // 2. Crear la NUEVA proforma local en León para el cliente final
             var totalProformas = await _context.Proformas.CountAsync();
@@ -658,7 +673,7 @@ namespace AbbaXpress.API.Controllers
 
                 totalLibras += peso;
                 subtotalCargaUSD += subtotal;
-                totalCostoProveedorUSD += itemOriginal.TarifaAplicada; // Costo para León = lo que Managua le cobra
+                totalCostoProveedorUSD += itemOriginal.TarifaAplicada;
 
                 nuevosPaquetesLeon.Add(new Paquete
                 {
@@ -681,7 +696,7 @@ namespace AbbaXpress.API.Controllers
             {
                 NumeroProforma = correlativoLeon,
                 ClienteId = clienteLeon.Id,
-                SucursalOrigenId = 3, // Sucursal León
+                SucursalOrigenId = 3, // Sucursal local León
                 SucursalDestinoId = 3,
                 UsuarioCreacionId = usuarioId,
                 Estado = estadoInicial,
@@ -692,6 +707,7 @@ namespace AbbaXpress.API.Controllers
                 TotalCobradoUSD = totalFinalCobradoUSD,
                 TotalCostoProveedorUSD = totalCostoProveedorUSD,
                 TipoCambioAplicado = configLeon.TipoCambioNIO,
+                EsCargaInterSucursal = false, // Es venta local regular
                 FechaRegistro = DateTime.UtcNow,
                 FechaFacturacion = fechaFacturacion,
                 Paquetes = nuevosPaquetesLeon
@@ -699,21 +715,20 @@ namespace AbbaXpress.API.Controllers
 
             _context.Proformas.Add(nuevaProformaLeon);
 
-            // Registro de auditoría
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = 3,
                 UsuarioId = usuarioId,
                 Accion = "CREACION",
                 Modulo = "PROFORMAS",
-                Descripcion = $"El usuario {nombreUsuario} recepcionó traslado #{proformaOriginal.NumeroProforma} (quedando por liquidar B2B) y generó proforma local #{correlativoLeon} para '{clienteLeon.Nombre}'.",
+                Descripcion = $"Remisión #{proformaOriginal.NumeroProforma} asignada a '{clienteLeon.Nombre}'. Se generó factura local #{correlativoLeon}.",
                 FechaMovimiento = DateTime.UtcNow
             });
 
             await _context.SaveChangesAsync();
 
             return Ok(new { 
-                message = $"Carga recepcionada. Se generó la proforma local #{correlativoLeon} para {clienteLeon.Nombre}.",
+                message = $"Carga asignada correctamente. Se generó la proforma local #{correlativoLeon} para {clienteLeon.Nombre}.",
                 proformaId = nuevaProformaLeon.Id,
                 numero = nuevaProformaLeon.NumeroProforma
             });

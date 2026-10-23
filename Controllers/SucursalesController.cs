@@ -31,10 +31,7 @@ namespace AbbaXpress.API.Controllers
             {
                 query = query.Where(s => s.Id == 3);
             }
-            else // Managua solo ve Bolonia (1) y Doral (2)
-            {
-                query = query.Where(s => s.Id == 1 || s.Id == 2);
-            }
+            // Managua (1 y 2) y Super Admin ven todas (Bolonia, Doral y León) para permitir traslados inter-sucursal
 
             return Ok(await query.OrderBy(s => s.Id).ToListAsync());
         }

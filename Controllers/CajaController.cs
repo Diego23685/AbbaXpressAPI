@@ -24,17 +24,25 @@ namespace AbbaXpress.API.Controllers
         [HttpGet("estado-actual")]
         public async Task<ActionResult<object>> GetEstadoActual([FromQuery] int? sucursalId)
         {
-            int targetSucursalId = ObtenerSucursalContexto(sucursalId);
+            var sucursalClaim = User.FindFirstValue("SucursalId");
+            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
+            int targetSucursalId = sucursalId.HasValue && sucursalId.Value > 0 ? sucursalId.Value : miSucursalId;
 
             var sesionAbierta = await _context.SesionesCaja
                 .Include(s => s.UsuarioApertura)
+                .Include(s => s.Sucursal)
                 .Include(s => s.Denominaciones)
                 .Include(s => s.Movimientos)
+                .OrderByDescending(s => s.Id)
                 .FirstOrDefaultAsync(s => s.SucursalId == targetSucursalId && s.Estado == "ABIERTA");
 
             if (sesionAbierta == null)
             {
-                return Ok(new { abierta = false, mensaje = "La sucursal no tiene una caja abierta actualmente." });
+                return Ok(new { 
+                    abierta = false, 
+                    sucursalId = targetSucursalId,
+                    mensaje = "No hay sesión de caja abierta en esta sucursal." 
+                });
             }
 
             // Calcular ingresos de facturas cobradas en efectivo dentro de esta sesión
@@ -42,25 +50,48 @@ namespace AbbaXpress.API.Controllers
                 .Where(p => p.SesionCajaId == sesionAbierta.Id && p.Estado == "FACTURADO")
                 .ToListAsync();
 
-            decimal ingresosNio = proformasEfectivo.Where(p => p.MetodoPago == "EFECTIVO_NIO").Sum(p => p.TotalCobradoUSD * p.TipoCambioAplicado);
-            decimal ingresosUsd = proformasEfectivo.Where(p => p.MetodoPago == "EFECTIVO_USD").Sum(p => p.TotalCobradoUSD);
+            decimal ingresosNio = proformasEfectivo
+                .Where(p => p.MetodoPago == "EFECTIVO_NIO")
+                .Sum(p => p.TotalCobradoUSD * p.TipoCambioAplicado);
 
-            decimal egresosValesNio = sesionAbierta.Movimientos.Where(m => m.Moneda == "NIO" && m.TipoMovimiento == "EGRESO_VALE").Sum(m => m.Monto);
-            decimal egresosValesUsd = sesionAbierta.Movimientos.Where(m => m.Moneda == "USD" && m.TipoMovimiento == "EGRESO_VALE").Sum(m => m.Monto);
+            decimal ingresosUsd = proformasEfectivo
+                .Where(p => p.MetodoPago == "EFECTIVO_USD")
+                .Sum(p => p.TotalCobradoUSD);
+
+            decimal egresosValesNio = sesionAbierta.Movimientos
+                .Where(m => m.Moneda == "NIO" && m.TipoMovimiento == "EGRESO_VALE")
+                .Sum(m => m.Monto);
+
+            decimal egresosValesUsd = sesionAbierta.Movimientos
+                .Where(m => m.Moneda == "USD" && m.TipoMovimiento == "EGRESO_VALE")
+                .Sum(m => m.Monto);
 
             return Ok(new
             {
                 abierta = true,
                 sesionId = sesionAbierta.Id,
-                sesionAbierta.FechaApertura,
-                Cajero = sesionAbierta.UsuarioApertura?.Nombre,
-                sesionAbierta.BultosFisicosApertura,
-                sesionAbierta.MontoAperturaCordobas,
-                sesionAbierta.MontoAperturaDolares,
-                SaldoActualTeoricoNio = (sesionAbierta.MontoAperturaCordobas + ingresosNio) - egresosValesNio,
-                SaldoActualTeoricoUsd = (sesionAbierta.MontoAperturaDolares + ingresosUsd) - egresosValesUsd,
-                TotalValesEmitidos = sesionAbierta.Movimientos.Count,
-                DenominacionesApertura = sesionAbierta.Denominaciones.Where(d => d.Momento == "APERTURA")
+                sucursalId = sesionAbierta.SucursalId,
+                sucursalNombre = sesionAbierta.Sucursal?.Nombre ?? "Sede Central",
+                fechaApertura = sesionAbierta.FechaApertura,
+                cajero = sesionAbierta.UsuarioApertura?.Nombre ?? "Cajero",
+                bultosFisicosApertura = sesionAbierta.BultosFisicosApertura,
+                montoAperturaCordobas = sesionAbierta.MontoAperturaCordobas,
+                montoAperturaDolares = sesionAbierta.MontoAperturaDolares,
+                saldoActualTeoricoNio = (sesionAbierta.MontoAperturaCordobas + ingresosNio) - egresosValesNio,
+                saldoActualTeoricoUsd = (sesionAbierta.MontoAperturaDolares + ingresosUsd) - egresosValesUsd,
+                totalValesEmitidos = sesionAbierta.Movimientos.Count,
+                // Proyección anónima limpia sin relaciones circulares
+                denominacionesApertura = sesionAbierta.Denominaciones
+                    .Where(d => d.Momento == "APERTURA")
+                    .Select(d => new
+                    {
+                        d.Id,
+                        d.Moneda,
+                        d.Denominacion,
+                        d.Cantidad,
+                        d.Subtotal
+                    })
+                    .ToList()
             });
         }
 
@@ -68,7 +99,10 @@ namespace AbbaXpress.API.Controllers
         [HttpPost("apertura")]
         public async Task<IActionResult> AperturarCaja([FromBody] AperturaCajaDto dto)
         {
-            int targetSucursalId = ObtenerSucursalContexto(dto.SucursalId);
+            var sucursalClaim = User.FindFirstValue("SucursalId");
+            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
+            int targetSucursalId = dto.SucursalId.HasValue && dto.SucursalId.Value > 0 ? dto.SucursalId.Value : miSucursalId;
+
             int usuarioId = ObtenerUsuarioId();
 
             bool yaExisteAbierta = await _context.SesionesCaja
