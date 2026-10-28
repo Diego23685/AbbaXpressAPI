@@ -12,6 +12,15 @@ namespace AbbaXpress.API.DTOs
         public int? ProveedorId { get; set; }
         public decimal? TarifaManual { get; set; }
     }
+    public class PaqueteUpdateDto
+    {
+        public int Id { get; set; }
+        public string Tracking { get; set; } = string.Empty;
+        public decimal PesoLbs { get; set; }
+        public string ViaEnvio { get; set; } = "AEREO";
+        public string Categoria { get; set; } = "GENERAL";
+        public decimal TarifaAplicada { get; set; }
+    }
 
     public class RecepcionCargaDto
     {

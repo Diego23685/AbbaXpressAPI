@@ -43,10 +43,9 @@ namespace AbbaXpress.API.Controllers
                 .Include(p => p.Paquetes)
                 .AsQueryable();
 
-            // Aislamiento estricto: Si es León (3), FORZAR que solo vea lo que pertenezca a León
-            if (miSucursalId == 3 && userRole != "SUPER_ADMIN")
+            if (userRole != "SUPER_ADMIN")
             {
-                query = query.Where(p => p.SucursalOrigenId == 3 || p.SucursalDestinoId == 3);
+                query = query.Where(p => p.SucursalOrigenId == miSucursalId || p.SucursalDestinoId == miSucursalId);
             }
             else
             {
@@ -121,13 +120,12 @@ namespace AbbaXpress.API.Controllers
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            // Solo mostramos cargas con destino León que aún estén en estado PENDIENTE_PAGO (no despachadas aún)
             var proformas = await _context.Proformas
                 .Include(p => p.Cliente)
                 .Include(p => p.SucursalOrigen)
                 .Include(p => p.SucursalDestino)
                 .Include(p => p.Paquetes)
-                .Where(p => p.SucursalDestinoId == 3 && p.Estado == "PENDIENTE_PAGO")
+                .Where(p => p.SucursalDestinoId == miSucursalId && p.SucursalOrigenId != miSucursalId && p.Estado == "PENDIENTE_PAGO")
                 .OrderByDescending(p => p.FechaRegistro)
                 .Select(p => new
                 {
@@ -154,18 +152,81 @@ namespace AbbaXpress.API.Controllers
             return Ok(proformas);
         }
 
+        // PUT: api/proformas/5/editar-paquetes
+        [HttpPut("{id}/editar-paquetes")]
+        public async Task<IActionResult> EditarPaquetes(int id, [FromBody] List<PaqueteUpdateDto> paquetesDto)
+        {
+            var proforma = await _context.Proformas
+                .Include(p => p.Paquetes)
+                .Include(p => p.Cliente)
+                .FirstOrDefaultAsync(p => p.Id == id);
+
+            if (proforma == null)
+                return NotFound(new { message = "Proforma no encontrada." });
+
+            if (proforma.Estado == "FACTURADO")
+                return BadRequest(new { message = "No se pueden modificar paquetes de una proforma ya facturada y cobrada." });
+
+            var config = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == proforma.SucursalOrigenId)
+                        ?? new ConfiguracionSucursal { TipoCambioNIO = 36.6243m, CostoProveedorAereo = 3.80m, CostoProveedorMaritimo = 1.50m };
+
+            decimal totalLbs = 0;
+            decimal subtotalCargaUSD = 0;
+            decimal totalCostoProveedorUSD = 0;
+
+            foreach (var dto in paquetesDto)
+            {
+                var paquete = proforma.Paquetes.FirstOrDefault(p => p.Id == dto.Id);
+                if (paquete == null) continue;
+
+                decimal subtotal = (dto.Categoria.ToUpper() == "CELULAR" || dto.Categoria.ToUpper() == "PALLET")
+                    ? dto.TarifaAplicada
+                    : dto.PesoLbs * dto.TarifaAplicada;
+
+                decimal costoLibra = dto.ViaEnvio.ToUpper() == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo;
+                decimal costoProveedor = (dto.Categoria.ToUpper() == "CELULAR") ? 15.00m : dto.PesoLbs * costoLibra;
+
+                paquete.Tracking = dto.Tracking.Trim().ToUpper();
+                paquete.PesoLbs = dto.PesoLbs;
+                paquete.ViaEnvio = dto.ViaEnvio.ToUpper();
+                paquete.Categoria = dto.Categoria.ToUpper();
+                paquete.TarifaAplicada = dto.TarifaAplicada;
+                paquete.SubtotalUSD = subtotal;
+                paquete.CostoProveedor = costoProveedor;
+
+                totalLbs += dto.PesoLbs;
+                subtotalCargaUSD += subtotal;
+                totalCostoProveedorUSD += costoProveedor;
+            }
+
+            proforma.TotalLbs = totalLbs;
+            proforma.TotalCobradoUSD = Math.Max(0, (subtotalCargaUSD + proforma.CargoDeliveryUSD) - proforma.DescuentoUSD);
+            proforma.TotalCostoProveedorUSD = totalCostoProveedorUSD;
+
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
+            var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
+
+            _context.LogsAuditoria.Add(new LogAuditoria
+            {
+                SucursalId = proforma.SucursalOrigenId,
+                UsuarioId = usuarioId,
+                Accion = "MODIFICACION",
+                Modulo = "PROFORMAS",
+                Descripcion = $"El usuario {nombreUsuario} corrigió peso/tarifas en los bultos de la proforma #{proforma.NumeroProforma}.",
+                FechaMovimiento = DateTime.UtcNow
+            });
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Paquetes actualizados correctamente." });
+        }
+
         // PUT: api/proformas/despachar-lote
         [HttpPut("despachar-lote")]
         public async Task<IActionResult> DespacharLote([FromBody] List<int> proformaIds)
         {
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
-
-            // Solo Managua (Sucursal 1 o 2) puede despachar manifiestos hacia León
-            if (miSucursalId == 3)
-            {
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "La sucursal de León no tiene permisos para emitir despachos inter-sucursal." });
-            }
 
             if (proformaIds == null || !proformaIds.Any())
                 return BadRequest(new { message = "Debe enviar al menos una proforma para despachar." });
@@ -192,12 +253,12 @@ namespace AbbaXpress.API.Controllers
                 UsuarioId = usuarioId,
                 Accion = "MODIFICACION",
                 Modulo = "PROFORMAS",
-                Descripcion = $"El usuario {nombreUsuario} despachó {proformas.Count} carga(s) en tránsito hacia León.",
+                Descripcion = $"El usuario {nombreUsuario} despachó {proformas.Count} carga(s) en tránsito.",
                 FechaMovimiento = DateTime.UtcNow
             });
 
             await _context.SaveChangesAsync();
-            return Ok(new { message = $"Se despacharon {proformas.Count} cargas en ruta hacia León." });
+            return Ok(new { message = $"Se despacharon {proformas.Count} cargas en ruta." });
         }
 
         // PUT: api/proformas/recibir-lote
@@ -225,14 +286,13 @@ namespace AbbaXpress.API.Controllers
                 p.Estado = "RECIBIDO_BODEGA_LOCAL"; 
             }
 
-            // Registro de auditoría por recepción en lote
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = miSucursalId,
                 UsuarioId = usuarioId,
                 Accion = "MODIFICACION",
                 Modulo = "PROFORMAS",
-                Descripcion = $"El usuario {nombreUsuario} confirmó la recepción en bodega de {proformas.Count} carga(s) (Proformas: {string.Join(", ", proformas.Select(x => x.NumeroProforma))}).",
+                Descripcion = $"El usuario {nombreUsuario} confirmó la recepción de {proformas.Count} carga(s) (Proformas: {string.Join(", ", proformas.Select(x => x.NumeroProforma))}).",
                 FechaMovimiento = DateTime.UtcNow
             });
 
@@ -263,7 +323,6 @@ namespace AbbaXpress.API.Controllers
             sb.AppendLine($"*Peso Total:* {proforma.TotalLbs:F2} lbs");
             sb.AppendLine($"*Cant. Paquetes:* {proforma.Paquetes.Count}");
             sb.AppendLine();
-            sb.AppendLine($"*Detalle de Paquetes:*");
 
             foreach (var pkg in proforma.Paquetes)
             {
@@ -274,16 +333,11 @@ namespace AbbaXpress.API.Controllers
             if (proforma.CargoDeliveryUSD > 0)
                 sb.AppendLine($"*Delivery:* ${proforma.CargoDeliveryUSD:F2} USD");
 
-            if (proforma.DescuentoUSD > 0)
-                sb.AppendLine($"*Descuento:* -${proforma.DescuentoUSD:F2} USD");
-
             decimal totalNio = proforma.TotalCobradoUSD * proforma.TipoCambioAplicado;
 
             sb.AppendLine();
             sb.AppendLine($"*TOTAL A PAGAR:*");
             sb.AppendLine($"*${proforma.TotalCobradoUSD:F2} USD*  |  *C$ {totalNio:F2} NIO*");
-            sb.AppendLine();
-            sb.AppendLine($"_Gracias por confiar en Abba Xpress._");
 
             return Ok(new
             {
@@ -339,19 +393,15 @@ namespace AbbaXpress.API.Controllers
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
             int sucursalOrigenId = int.TryParse(sucursalIdClaim, out int sId) ? sId : 1;
 
-            // Detección automática de Carga hacia León
-            // Reemplaza la línea de detección de León por esta:
-            string nombreClienteUpper = cliente.Nombre.ToUpper();
-            string tipoClienteUpper = cliente.TipoCliente.ToUpper();
+            // Detección genérica de sucursal destino
+            int sucursalDestinoId = dto.SucursalDestinoId.HasValue && dto.SucursalDestinoId.Value > 0
+                ? dto.SucursalDestinoId.Value
+                : sucursalOrigenId;
 
-            bool esParaLeon = dto.SucursalDestinoId == 3 
-                        || tipoClienteUpper == "SUBAGENCIA" 
-                        || tipoClienteUpper == "SUCURSAL_B2B"
-                        || tipoClienteUpper == "CLIENTE_MAYORISTA" && nombreClienteUpper.Contains("LEON")
-                        || nombreClienteUpper.Contains("LEON") 
-                        || nombreClienteUpper.Contains("LEÓN");
-
-            int sucursalDestinoId = esParaLeon ? 3 : sucursalOrigenId;
+            var sedeDestino = await _context.Sucursales.FindAsync(sucursalDestinoId);
+            bool esDestinoSubagencia = (sedeDestino != null && sedeDestino.TipoSucursal == "FRANQUICIA_B2B")
+                                    || cliente.TipoCliente == "SUBAGENCIA" 
+                                    || cliente.TipoCliente == "CLIENTE_MAYORISTA";
 
             int configSucursalId = sucursalOrigenId == 2 ? 1 : sucursalOrigenId;
             var config = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == configSucursalId)
@@ -370,7 +420,6 @@ namespace AbbaXpress.API.Controllers
 
             foreach (var item in dto.Paquetes)
             {
-                // Determinar costo de proveedor por paquete
                 decimal costoProveedorLibra = item.ViaEnvio == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo;
                 if (item.ProveedorId.HasValue && proveedores.TryGetValue(item.ProveedorId.Value, out var prov))
                 {
@@ -424,7 +473,6 @@ namespace AbbaXpress.API.Controllers
                 });
             }
 
-            // REGLA OBLIGATORIA: En recepción entra SIEMPRE como PENDIENTE_PAGO y sin delivery
             var proforma = new Proforma
             {
                 NumeroProforma = numeroCorrelativo,
@@ -440,7 +488,7 @@ namespace AbbaXpress.API.Controllers
                 TotalCobradoUSD = subtotalCargaUSD,
                 TotalCostoProveedorUSD = totalCostoProveedorUSD,
                 TipoCambioAplicado = config.TipoCambioNIO,
-                EsCargaInterSucursal = esParaLeon,
+                EsCargaInterSucursal = esDestinoSubagencia,
                 FechaRegistro = DateTime.UtcNow,
                 FechaFacturacion = null,
                 Paquetes = nuevosPaquetes
@@ -448,14 +496,13 @@ namespace AbbaXpress.API.Controllers
 
             _context.Proformas.Add(proforma);
 
-            // Si es carga para León generada en Managua, emitir la notificación de campanilla
-            if (esParaLeon && sucursalOrigenId != 3)
+            if (esDestinoSubagencia && sucursalDestinoId != sucursalOrigenId)
             {
                 _context.NotificacionesSucursales.Add(new NotificacionSucursal
                 {
-                    SucursalDestinoId = 3,
+                    SucursalDestinoId = sucursalDestinoId,
                     Proforma = proforma,
-                    Mensaje = $"Managua registró nueva paquetería para León (#{numeroCorrelativo} - {totalLibras:F2} lbs).",
+                    Mensaje = $"Nueva carga registrada hacia su sede (#{numeroCorrelativo} - {totalLibras:F2} lbs).",
                     Leida = false,
                     FechaCreacion = DateTime.UtcNow
                 });
@@ -467,7 +514,7 @@ namespace AbbaXpress.API.Controllers
                 UsuarioId = usuarioId,
                 Accion = "CREACION",
                 Modulo = "RECEPCION",
-                Descripcion = $"Recepción de {nuevosPaquetes.Count} bultos (#{numeroCorrelativo}) para '{cliente.Nombre}'. Destino: {(esParaLeon ? "León" : "Managua")}.",
+                Descripcion = $"Recepción de {nuevosPaquetes.Count} bultos (#{numeroCorrelativo}) para '{cliente.Nombre}'.",
                 FechaMovimiento = DateTime.UtcNow
             });
 
@@ -483,7 +530,7 @@ namespace AbbaXpress.API.Controllers
             });
         }
 
-        // PUT: api/proformas/5/liquidar (Cobro y Facturación Final)
+        // PUT: api/proformas/5/liquidar
         [HttpPut("{id}/liquidar")]
         public async Task<IActionResult> LiquidarProforma(int id, [FromBody] LiquidarProformaDto dto)
         {
@@ -502,18 +549,15 @@ namespace AbbaXpress.API.Controllers
             if (proforma == null)
                 return NotFound(new { message = "Proforma no encontrada." });
 
-            // Validar que exista caja abierta en la sucursal del cajero
             var sesionCaja = await _context.SesionesCaja
                 .FirstOrDefaultAsync(s => s.SucursalId == miSucursalId && s.Estado == "ABIERTA");
 
             if (sesionCaja == null)
                 return BadRequest(new { message = "Operación denegada: Debe aperturar caja antes de cobrar y facturar paquetes." });
 
-            // Aplicar delivery y descuentos finales acordados al entregar
             decimal totalFlete = proforma.Paquetes.Sum(p => p.SubtotalUSD);
             decimal totalFinalUSD = Math.Max(0, (totalFlete + dto.CargoDeliveryUSD) - dto.DescuentoUSD);
 
-            // Tratamiento según Método de Pago
             proforma.MetodoPago = dto.MetodoPago.ToUpper();
             proforma.CargoDeliveryUSD = dto.CargoDeliveryUSD;
             proforma.DescuentoUSD = dto.DescuentoUSD;
@@ -522,14 +566,12 @@ namespace AbbaXpress.API.Controllers
             proforma.FechaFacturacion = DateTime.UtcNow;
             proforma.SesionCajaId = sesionCaja.Id;
 
-            // Retención comisión POS
             if (dto.MetodoPago.ToUpper() == "POS")
             {
                 proforma.PorcentajeComisionPOS = dto.PorcentajeComisionPOS;
                 proforma.MontoComisionPOS = totalFinalUSD * (dto.PorcentajeComisionPOS / 100m);
             }
 
-            // Vuelto en efectivo
             Dictionary<decimal, int>? desgloseVuelto = null;
             if (dto.MetodoPago.StartsWith("EFECTIVO"))
             {
@@ -546,15 +588,16 @@ namespace AbbaXpress.API.Controllers
                 desgloseVuelto = CalcularDesgloseVuelto(vuelto, dto.MonedaPagoEfectivo);
             }
 
-            // CONTABILIDAD INTER-SUCURSAL: Si Managua le cobra a la Subagencia León
-            if ((miSucursalId == 1 || miSucursalId == 2) && (proforma.SucursalDestinoId == 3 || proforma.EsCargaInterSucursal))
+            // Gasto operativo automático en la subagencia receptora
+            var sedeDestino = await _context.Sucursales.FindAsync(proforma.SucursalDestinoId);
+            if (sedeDestino != null && sedeDestino.TipoSucursal == "FRANQUICIA_B2B" && proforma.SucursalOrigenId != proforma.SucursalDestinoId)
             {
-                var gastoLeon = new GastoOperativo
+                var gastoSubagencia = new GastoOperativo
                 {
-                    SucursalId = 3, // Sucursal León
+                    SucursalId = proforma.SucursalDestinoId,
                     UsuarioId = usuarioId,
-                    Categoria = "FLETE_MANAGUA",
-                    Descripcion = $"Costo flete Managua s/ Factura #{proforma.NumeroProforma} ({proforma.Cliente?.Nombre})",
+                    Categoria = "FLETE_MATRIZ",
+                    Descripcion = $"Flete recepcionado s/ Factura #{proforma.NumeroProforma} ({proforma.Cliente?.Nombre})",
                     MontoUSD = totalFinalUSD,
                     TipoCambioAplicado = proforma.TipoCambioAplicado,
                     MetodoPago = proforma.MetodoPago,
@@ -562,10 +605,9 @@ namespace AbbaXpress.API.Controllers
                     FechaGasto = DateTime.UtcNow
                 };
 
-                _context.GastosOperativos.Add(gastoLeon);
+                _context.GastosOperativos.Add(gastoSubagencia);
                 await _context.SaveChangesAsync();
-
-                proforma.GastoGeneradoLeonId = gastoLeon.Id;
+                proforma.GastoGeneradoLeonId = gastoSubagencia.Id;
             }
 
             _context.LogsAuditoria.Add(new LogAuditoria
@@ -613,9 +655,9 @@ namespace AbbaXpress.API.Controllers
             return desglose;
         }
 
-        // PUT: api/proformas/5/procesar-recepcion-leon
-        [HttpPut("{id}/procesar-recepcion-leon")]
-        public async Task<IActionResult> ProcesarRecepcionLeon(int id, [FromBody] RecepcionLeonDto dto)
+        // PUT: api/proformas/5/procesar-recepcion-subagencia
+        [HttpPut("{id}/procesar-recepcion-subagencia")]
+        public async Task<IActionResult> ProcesarRecepcionSubagencia(int id, [FromBody] RecepcionLeonDto dto)
         {
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
@@ -624,42 +666,36 @@ namespace AbbaXpress.API.Controllers
             var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
 
-            if (miSucursalId != 3 && userRole != "SUPER_ADMIN")
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Solo la sucursal de León puede procesar transferencias recibidas." });
-
             var proformaOriginal = await _context.Proformas
                 .Include(p => p.Paquetes)
                 .Include(p => p.Cliente)
-                .FirstOrDefaultAsync(p => p.Id == id && p.SucursalDestinoId == 3);
+                .FirstOrDefaultAsync(p => p.Id == id && p.SucursalDestinoId == miSucursalId);
 
             if (proformaOriginal == null)
-                return NotFound(new { message = "Proforma no encontrada o no tiene como destino León." });
+                return NotFound(new { message = "Proforma no encontrada o no pertenece a esta sucursal de destino." });
 
-            // VALIDACIÓN: Evitar que se asigne más de una vez
-            if (proformaOriginal.Estado == "PROCESADO_ASIGNADO" || proformaOriginal.Estado == "CERRADO_B2B")
-            {
+            if (proformaOriginal.Estado == "PROCESADO_ASIGNADO")
                 return BadRequest(new { message = $"Esta remisión (#{proformaOriginal.NumeroProforma}) ya fue asignada previamente a un cliente local." });
-            }
 
-            var clienteLeon = await _context.Clientes.FindAsync(dto.ClienteId);
-            if (clienteLeon == null)
-                return BadRequest(new { message = "El cliente seleccionado en León no existe." });
+            var clienteLocal = await _context.Clientes.FindAsync(dto.ClienteId);
+            if (clienteLocal == null)
+                return BadRequest(new { message = "El cliente local seleccionado no existe." });
 
-            var configLeon = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == 3)
-                            ?? new ConfiguracionSucursal { SucursalId = 3 };
+            var configLocal = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == miSucursalId)
+                            ?? new ConfiguracionSucursal { SucursalId = miSucursalId };
 
-            // 1. Marcar la remisión original de Managua como COMPLETADA / ASIGNADA
+            // 1. Marcar la remisión como completada y bloqueada
             proformaOriginal.Estado = "PROCESADO_ASIGNADO";
 
-            // 2. Crear la NUEVA proforma local en León para el cliente final
+            // 2. Crear proforma final local
             var totalProformas = await _context.Proformas.CountAsync();
-            string correlativoLeon = $"ABBA-{1001 + totalProformas}";
+            string correlativoLocal = $"ABBA-{1001 + totalProformas}";
 
             decimal totalLibras = 0;
             decimal subtotalCargaUSD = 0;
             decimal totalCostoProveedorUSD = 0;
 
-            var nuevosPaquetesLeon = new List<Paquete>();
+            var nuevosPaquetes = new List<Paquete>();
 
             foreach (var itemOriginal in proformaOriginal.Paquetes)
             {
@@ -675,7 +711,7 @@ namespace AbbaXpress.API.Controllers
                 subtotalCargaUSD += subtotal;
                 totalCostoProveedorUSD += itemOriginal.TarifaAplicada;
 
-                nuevosPaquetesLeon.Add(new Paquete
+                nuevosPaquetes.Add(new Paquete
                 {
                     Tracking = itemOriginal.Tracking,
                     Label = itemOriginal.Label,
@@ -692,45 +728,45 @@ namespace AbbaXpress.API.Controllers
             string estadoInicial = dto.MetodoPago == "CREDITO" ? "PENDIENTE_PAGO" : "FACTURADO";
             DateTime? fechaFacturacion = dto.MetodoPago == "CREDITO" ? null : DateTime.UtcNow;
 
-            var nuevaProformaLeon = new Proforma
+            var nuevaProformaLocal = new Proforma
             {
-                NumeroProforma = correlativoLeon,
-                ClienteId = clienteLeon.Id,
-                SucursalOrigenId = 3, // Sucursal local León
-                SucursalDestinoId = 3,
+                NumeroProforma = correlativoLocal,
+                ClienteId = clienteLocal.Id,
+                SucursalOrigenId = miSucursalId,
+                SucursalDestinoId = miSucursalId,
                 UsuarioCreacionId = usuarioId,
                 Estado = estadoInicial,
-                MetodoPago = dto.MetodoPago,
+                MetodoPago = dto.MetodoPago ?? "CREDITO",
                 TotalLbs = totalLibras,
                 CargoDeliveryUSD = dto.CargoDeliveryUSD,
                 DescuentoUSD = dto.DescuentoUSD,
                 TotalCobradoUSD = totalFinalCobradoUSD,
                 TotalCostoProveedorUSD = totalCostoProveedorUSD,
-                TipoCambioAplicado = configLeon.TipoCambioNIO,
-                EsCargaInterSucursal = false, // Es venta local regular
+                TipoCambioAplicado = configLocal.TipoCambioNIO,
+                EsCargaInterSucursal = false,
                 FechaRegistro = DateTime.UtcNow,
                 FechaFacturacion = fechaFacturacion,
-                Paquetes = nuevosPaquetesLeon
+                Paquetes = nuevosPaquetes
             };
 
-            _context.Proformas.Add(nuevaProformaLeon);
+            _context.Proformas.Add(nuevaProformaLocal);
 
             _context.LogsAuditoria.Add(new LogAuditoria
             {
-                SucursalId = 3,
+                SucursalId = miSucursalId,
                 UsuarioId = usuarioId,
                 Accion = "CREACION",
                 Modulo = "PROFORMAS",
-                Descripcion = $"Remisión #{proformaOriginal.NumeroProforma} asignada a '{clienteLeon.Nombre}'. Se generó factura local #{correlativoLeon}.",
+                Descripcion = $"Remisión #{proformaOriginal.NumeroProforma} asignada a '{clienteLocal.Nombre}'. Se generó factura local #{correlativoLocal}.",
                 FechaMovimiento = DateTime.UtcNow
             });
 
             await _context.SaveChangesAsync();
 
             return Ok(new { 
-                message = $"Carga asignada correctamente. Se generó la proforma local #{correlativoLeon} para {clienteLeon.Nombre}.",
-                proformaId = nuevaProformaLeon.Id,
-                numero = nuevaProformaLeon.NumeroProforma
+                message = $"Carga asignada correctamente. Se generó la proforma local #{correlativoLocal} para {clienteLocal.Nombre}.",
+                proformaId = nuevaProformaLocal.Id,
+                numero = nuevaProformaLocal.NumeroProforma
             });
         }
 
@@ -740,25 +776,12 @@ namespace AbbaXpress.API.Controllers
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            if (miSucursalId == 3)
-            {
-                if (sucursalIdParam.HasValue && sucursalIdParam.Value != 3)
-                    return (false, new List<int>(), Forbid());
-
-                return (true, new List<int> { 3 }, null);
-            }
-
             if (userRole == "SUPER_ADMIN")
             {
                 if (sucursalIdParam.HasValue)
-                {
-                    if (sucursalIdParam.Value != 1 && sucursalIdParam.Value != 2)
-                        return (false, new List<int>(), Forbid());
-
                     return (true, new List<int> { sucursalIdParam.Value }, null);
-                }
 
-                return (true, new List<int> { 1, 2 }, null);
+                return (true, new List<int> { 1, 2, 3 }, null);
             }
 
             if (sucursalIdParam.HasValue && sucursalIdParam.Value != miSucursalId)

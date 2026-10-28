@@ -27,7 +27,7 @@ namespace AbbaXpress.API.Controllers
             [FromQuery] DateTime? fechaInicio,
             [FromQuery] DateTime? fechaFin)
         {
-            var (esValido, targetIds, errorResult) = ValidarAlcanceSucursales(sucursalId);
+            var (esValido, targetIds, errorResult) = await ValidarAlcanceSucursalesAsync(sucursalId);
             if (!esValido) return errorResult!;
 
             var proformaQuery = _context.Proformas
@@ -57,14 +57,12 @@ namespace AbbaXpress.API.Controllers
             var proformas = await proformaQuery.ToListAsync();
             var gastos = await gastoQuery.ToListAsync();
 
-            // Cálculos financieros
             decimal ventasTotalesUSD = proformas.Where(p => p.Estado == "FACTURADO").Sum(p => p.TotalCobradoUSD);
             decimal costosProveedorUSD = proformas.Where(p => p.Estado == "FACTURADO").Sum(p => p.TotalCostoProveedorUSD);
             decimal utilidadBrutaUSD = ventasTotalesUSD - costosProveedorUSD;
             decimal totalGastosOperativosUSD = gastos.Sum(g => g.MontoUSD);
             decimal utilidadNetaUSD = utilidadBrutaUSD - totalGastosOperativosUSD;
 
-            // Ventas por Cliente
             var ventasPorCliente = proformas
                 .Where(p => p.Estado == "FACTURADO")
                 .GroupBy(p => p.Cliente != null ? p.Cliente.Nombre : "Sin Asignar")
@@ -76,7 +74,6 @@ namespace AbbaXpress.API.Controllers
                 .OrderByDescending(x => x.TotalUSD)
                 .ToList();
 
-            // Ventas por Sucursal (para Superadmin o sedes consolidadas)
             var ventasPorSucursal = proformas
                 .Where(p => p.Estado == "FACTURADO")
                 .GroupBy(p => p.SucursalOrigen != null ? p.SucursalOrigen.Nombre : "Sin Sede")
@@ -128,43 +125,41 @@ namespace AbbaXpress.API.Controllers
             });
         }
 
-        private (bool EsValido, List<int> TargetIds, ActionResult? ErrorResult) ValidarAlcanceSucursales(int? sucursalIdParam)
+        private async Task<(bool EsValido, List<int> TargetIds, ActionResult? ErrorResult)> ValidarAlcanceSucursalesAsync(int? sucursalIdParam)
         {
             var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            bool soyLeon = miSucursalId == 3;
-            bool soyManagua = miSucursalId == 1 || miSucursalId == 2;
+            var idsPropias = await _context.Sucursales
+                .Where(s => s.Activa && s.TipoSucursal == "PROPIA")
+                .Select(s => s.Id)
+                .ToListAsync();
 
-            if (soyLeon)
-            {
-                if (sucursalIdParam.HasValue && sucursalIdParam.Value != 3)
-                    return (false, new List<int>(), Forbid());
-
-                return (true, new List<int> { 3 }, null);
-            }
-
-            if (soyManagua)
+            if (userRole == "SUPER_ADMIN")
             {
                 if (sucursalIdParam.HasValue)
                 {
-                    if (sucursalIdParam.Value != 1 && sucursalIdParam.Value != 2)
+                    if (!idsPropias.Contains(sucursalIdParam.Value))
                         return (false, new List<int>(), Forbid());
 
                     return (true, new List<int> { sucursalIdParam.Value }, null);
                 }
 
-                return (true, new List<int> { 1, 2 }, null);
+                return (true, idsPropias, null);
             }
 
-            if (userRole == "SUPER_ADMIN")
+            var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+            if (miSucursal?.TipoSucursal == "PROPIA")
             {
-                if (sucursalIdParam.HasValue)
-                    return (true, new List<int> { sucursalIdParam.Value }, null);
+                if (sucursalIdParam.HasValue && !idsPropias.Contains(sucursalIdParam.Value))
+                    return (false, new List<int>(), Forbid());
 
-                return (true, new List<int> { 1, 2, 3 }, null);
+                return (true, sucursalIdParam.HasValue ? new List<int> { sucursalIdParam.Value } : idsPropias, null);
             }
+
+            if (sucursalIdParam.HasValue && sucursalIdParam.Value != miSucursalId)
+                return (false, new List<int>(), Forbid());
 
             return (true, new List<int> { miSucursalId }, null);
         }

@@ -23,11 +23,17 @@ namespace AbbaXpress.API.Controllers
         [Authorize(Roles = "SUPER_ADMIN,ADMIN_SUCURSAL_INDEPENDIENTE,ADMIN_SUCURSAL")]
         public async Task<ActionResult<ConfiguracionSucursal>> GetConfiguracion([FromQuery] int? sucursalId)
         {
-            var (esValido, targetId, errorResult) = ValidarAccesoSucursal(sucursalId);
+            var (esValido, targetId, errorResult) = await ValidarAccesoSucursalAsync(sucursalId);
             if (!esValido) return errorResult!;
 
-            // Sincronización Managua: Si el objetivo es Doral (2), unificamos al registro central de Bolonia (1)
-            int sucursalConfigId = targetId == 2 ? 1 : targetId;
+            var targetSucursal = await _context.Sucursales.FindAsync(targetId);
+            int sucursalConfigId = targetId;
+
+            // Sedes propias comparten la configuración central de la matriz
+            if (targetSucursal != null && targetSucursal.TipoSucursal == "PROPIA")
+            {
+                sucursalConfigId = 1;
+            }
 
             var config = await _context.Configuraciones
                 .Include(c => c.Sucursal)
@@ -57,56 +63,46 @@ namespace AbbaXpress.API.Controllers
 
         [HttpPut]
         [Authorize(Roles = "SUPER_ADMIN,ADMIN_SUCURSAL_INDEPENDIENTE,ADMIN_SUCURSAL")]
-        public async Task<IActionResult> UpdateConfiguracion([FromBody] ConfiguracionSucursal model, [FromQuery] int? sucursalId)
+        public async Task<IActionResult> UpdateConfiguracion([FromQuery] int sucursalId, [FromBody] ConfiguracionSucursal dto)
         {
-            var (esValido, targetId, errorResult) = ValidarAccesoSucursal(sucursalId);
-            if (!esValido) return errorResult!;
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            var sucursalClaim = User.FindFirstValue("SucursalId");
+            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            var usuarioIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            int usuarioId = int.TryParse(usuarioIdClaim, out int uId) ? uId : 1;
-            var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
+            var targetSucursal = await _context.Sucursales.FindAsync(sucursalId);
+            if (targetSucursal == null) return NotFound(new { message = "Sucursal no encontrada" });
 
-            // Sincronización Managua al actualizar
-            int sucursalConfigId = targetId == 2 ? 1 : targetId;
+            // Bloqueo: Casa Matriz no puede fijar las tarifas de venta de franquicias B2B autónomas
+            if (targetSucursal.TipoSucursal == "FRANQUICIA_B2B" && miSucursalId != targetSucursal.Id && userRole != "SUPER_ADMIN")
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, 
+                    new { message = "Las tarifas de venta de una franquicia B2B son autónomas y solo pueden ser modificadas por su propia administración." });
+            }
 
-            var config = await _context.Configuraciones
-                .FirstOrDefaultAsync(c => c.SucursalId == sucursalConfigId);
+            int sucursalConfigId = targetSucursal.TipoSucursal == "PROPIA" ? 1 : sucursalId;
 
-            bool esNuevo = false;
+            var config = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == sucursalConfigId);
             if (config == null)
             {
                 config = new ConfiguracionSucursal { SucursalId = sucursalConfigId };
                 _context.Configuraciones.Add(config);
-                esNuevo = true;
             }
 
-            config.TipoCambioNIO = model.TipoCambioNIO;
-            config.TarifaAereoGeneral = model.TarifaAereoGeneral;
-            config.TarifaMaritimoGeneral = model.TarifaMaritimoGeneral;
-            config.TarifaCelularFija = model.TarifaCelularFija;
-            config.TarifaTvMaritimo = model.TarifaTvMaritimo;
-            config.TarifaTvAereo = model.TarifaTvAereo;
-            config.CostoProveedorAereo = model.CostoProveedorAereo;
-            config.CostoProveedorMaritimo = model.CostoProveedorMaritimo;
+            config.TipoCambioNIO = dto.TipoCambioNIO;
+            config.TarifaAereoGeneral = dto.TarifaAereoGeneral;
+            config.TarifaMaritimoGeneral = dto.TarifaMaritimoGeneral;
+            config.TarifaCelularFija = dto.TarifaCelularFija;
+            config.TarifaTvMaritimo = dto.TarifaTvMaritimo;
+            config.TarifaTvAereo = dto.TarifaTvAereo;
+            config.CostoProveedorAereo = dto.CostoProveedorAereo;
+            config.CostoProveedorMaritimo = dto.CostoProveedorMaritimo;
             config.UltimaModificacion = DateTime.UtcNow;
-
-            // Registro de auditoría por actualización de tarifas/configuración
-            _context.LogsAuditoria.Add(new LogAuditoria
-            {
-                SucursalId = sucursalConfigId,
-                UsuarioId = usuarioId,
-                Accion = esNuevo ? "CREACION" : "MODIFICACION",
-                Modulo = "CONFIGURACION",
-                Descripcion = $"El usuario {nombreUsuario} actualizó los parámetros y tarifas globales (T/C: {config.TipoCambioNIO} NIO, Aéreo: ${config.TarifaAereoGeneral}, Marítimo: ${config.TarifaMaritimoGeneral}).",
-                FechaMovimiento = DateTime.UtcNow
-            });
 
             await _context.SaveChangesAsync();
             return Ok(config);
         }
 
-        // Método reutilizable de seguridad de alcance
-        private (bool EsValido, int TargetId, ActionResult? ErrorResult) ValidarAccesoSucursal(int? sucursalIdParam)
+        private async Task<(bool EsValido, int TargetId, ActionResult? ErrorResult)> ValidarAccesoSucursalAsync(int? sucursalIdParam)
         {
             var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var sucursalClaim = User.FindFirstValue("SucursalId");
@@ -114,22 +110,18 @@ namespace AbbaXpress.API.Controllers
             int targetId = sucursalIdParam ?? miSucursalId;
 
             if (userRole == "SUPER_ADMIN")
-            {
                 return (true, targetId, null);
-            }
 
-            // Regla Managua: Sucursales 1 y 2 (Bolonia y Doral)
-            bool soyManagua = miSucursalId == 1 || miSucursalId == 2;
-            bool targetEsManagua = targetId == 1 || targetId == 2;
+            var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+            var targetSucursal = await _context.Sucursales.FindAsync(targetId);
 
-            // Regla León: Sucursal 3
-            bool soyLeon = miSucursalId == 3;
-            bool targetEsLeon = targetId == 3;
+            if (miSucursal == null || targetSucursal == null)
+                return (false, targetId, NotFound());
 
-            if (soyManagua && !targetEsManagua)
+            if (miSucursal.TipoSucursal == "PROPIA" && targetSucursal.TipoSucursal != "PROPIA")
                 return (false, targetId, Forbid());
 
-            if (soyLeon && !targetEsLeon)
+            if (miSucursal.TipoSucursal == "FRANQUICIA_B2B" && targetId != miSucursalId)
                 return (false, targetId, Forbid());
 
             return (true, targetId, null);

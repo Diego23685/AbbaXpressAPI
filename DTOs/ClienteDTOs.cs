@@ -4,6 +4,9 @@ namespace AbbaXpress.API.DTOs
 {
     public class ClienteCreateDto
     {
+
+        public int? SucursalId { get; set; }
+        
         [Required(ErrorMessage = "El nombre es obligatorio")]
         public string Nombre { get; set; } = string.Empty;
 

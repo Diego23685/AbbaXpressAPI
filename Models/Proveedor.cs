@@ -9,6 +9,11 @@ namespace AbbaXpress.API.Models
         [Key]
         public int Id { get; set; }
 
+        public int SucursalId { get; set; } = 1;
+
+        [ForeignKey("SucursalId")]
+        public virtual Sucursal? Sucursal { get; set; }
+
         [Required]
         [MaxLength(120)]
         public string Nombre { get; set; } = string.Empty;
@@ -26,6 +31,7 @@ namespace AbbaXpress.API.Models
         public decimal CostoLibraMaritimo { get; set; } = 1.50m;
 
         public bool Activo { get; set; } = true;
+
         public DateTime FechaRegistro { get; set; } = DateTime.UtcNow;
     }
 }

@@ -28,7 +28,7 @@ namespace AbbaXpress.API.Controllers
             [FromQuery] DateTime? fechaInicio,
             [FromQuery] DateTime? fechaFin)
         {
-            var (esValido, targetIds, errorResult) = ValidarAlcanceSucursales(sucursalId);
+            var (esValido, targetIds, errorResult) = await ValidarAlcanceSucursalesAsync(sucursalId);
             if (!esValido) return errorResult!;
 
             var query = _context.GastosOperativos
@@ -82,8 +82,7 @@ namespace AbbaXpress.API.Controllers
             int miSucursalId = int.TryParse(sucursalIdClaim, out int sId) ? sId : 1;
             int sucursalDestinoId = dto.SucursalId ?? miSucursalId;
 
-            // Validar que no registre gastos en otra sede fuera de su jurisdicción
-            var (esValido, _, errorResult) = ValidarAlcanceSucursales(sucursalDestinoId);
+            var (esValido, _, errorResult) = await ValidarAlcanceSucursalesAsync(sucursalDestinoId);
             if (!esValido) return errorResult!;
 
             var config = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == sucursalDestinoId)
@@ -104,7 +103,6 @@ namespace AbbaXpress.API.Controllers
 
             _context.GastosOperativos.Add(nuevoGasto);
 
-            // Registro de auditoría por creación de gasto operativo
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = sucursalDestinoId,
@@ -124,7 +122,7 @@ namespace AbbaXpress.API.Controllers
         [HttpGet("balance-utilidades")]
         public async Task<ActionResult<ResumenFinancieroDto>> GetBalanceUtilidades([FromQuery] int? sucursalId)
         {
-            var (esValido, targetIds, errorResult) = ValidarAlcanceSucursales(sucursalId);
+            var (esValido, targetIds, errorResult) = await ValidarAlcanceSucursalesAsync(sucursalId);
             if (!esValido) return errorResult!;
 
             int primarySucursalId = targetIds.First();
@@ -162,18 +160,37 @@ namespace AbbaXpress.API.Controllers
             });
         }
 
-        private (bool EsValido, List<int> TargetIds, ActionResult? ErrorResult) ValidarAlcanceSucursales(int? sucursalIdParam)
+        private async Task<(bool EsValido, List<int> TargetIds, ActionResult? ErrorResult)> ValidarAlcanceSucursalesAsync(int? sucursalIdParam)
         {
             var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
+            var idsPropias = await _context.Sucursales
+                .Where(s => s.Activa && s.TipoSucursal == "PROPIA")
+                .Select(s => s.Id)
+                .ToListAsync();
+
             if (userRole == "SUPER_ADMIN")
             {
                 if (sucursalIdParam.HasValue)
-                    return (true, new List<int> { sucursalIdParam.Value }, null);
+                {
+                    if (!idsPropias.Contains(sucursalIdParam.Value))
+                        return (false, new List<int>(), Forbid());
 
-                return (true, new List<int> { 1, 2, 3 }, null);
+                    return (true, new List<int> { sucursalIdParam.Value }, null);
+                }
+
+                return (true, idsPropias, null);
+            }
+
+            var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+            if (miSucursal?.TipoSucursal == "PROPIA")
+            {
+                if (sucursalIdParam.HasValue && !idsPropias.Contains(sucursalIdParam.Value))
+                    return (false, new List<int>(), Forbid());
+
+                return (true, sucursalIdParam.HasValue ? new List<int> { sucursalIdParam.Value } : idsPropias, null);
             }
 
             if (sucursalIdParam.HasValue && sucursalIdParam.Value != miSucursalId)

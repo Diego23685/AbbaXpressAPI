@@ -8,7 +8,7 @@ using AbbaXpress.API.Models;
 
 namespace AbbaXpress.API.Controllers
 {
-    [Authorize(Roles = "SUPER_ADMIN,ADMIN_SUCURSAL_INDEPENDIENTE")]
+    [Authorize(Roles = "SUPER_ADMIN,ADMIN_SUCURSAL_INDEPENDIENTE,ADMIN_SUCURSAL")]
     [ApiController]
     [Route("api/[controller]")]
     public class UsuariosController : ControllerBase
@@ -24,6 +24,7 @@ namespace AbbaXpress.API.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<object>>> GetUsuarios()
         {
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
@@ -31,13 +32,22 @@ namespace AbbaXpress.API.Controllers
                 .Include(u => u.Sucursal)
                 .AsQueryable();
 
-            if (miSucursalId == 3) // León
+            if (userRole != "SUPER_ADMIN")
             {
-                query = query.Where(u => u.SucursalId == 3);
-            }
-            else // Managua (Bolonia y Doral)
-            {
-                query = query.Where(u => u.SucursalId == 1 || u.SucursalId == 2);
+                // Obtenemos dinámicamente el tipo de la sucursal del operador actual
+                var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+                string miTipoSucursal = miSucursal?.TipoSucursal ?? "FRANQUICIA_B2B";
+
+                if (miTipoSucursal == "PROPIA")
+                {
+                    // Un admin de red propia ve a los usuarios de todas las sucursales PROPIAS de la empresa
+                    query = query.Where(u => u.Sucursal != null && u.Sucursal.TipoSucursal == "PROPIA");
+                }
+                else
+                {
+                    // Una franquicia B2B independiente únicamente ve los usuarios de su propia sede
+                    query = query.Where(u => u.SucursalId == miSucursalId);
+                }
             }
 
             var usuarios = await query
@@ -64,6 +74,7 @@ namespace AbbaXpress.API.Controllers
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var sucursalClaim = User.FindFirstValue("SucursalId");
             var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
@@ -71,25 +82,41 @@ namespace AbbaXpress.API.Controllers
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            // Regla de Aislamiento
-            bool soyLeon = miSucursalId == 3;
-            bool soyManagua = miSucursalId == 1 || miSucursalId == 2;
+            var sucursalDestino = await _context.Sucursales.FindAsync(dto.SucursalId);
+            if (sucursalDestino == null || !sucursalDestino.Activa)
+                return BadRequest(new { message = "La sucursal seleccionada no existe o está inactiva." });
 
-            if (soyLeon && dto.SucursalId != 3)
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "No tiene permisos para crear usuarios en sucursales de Managua." });
+            // Validación dinámica de alcance según el TipoSucursal
+            if (userRole != "SUPER_ADMIN")
+            {
+                var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+                string miTipoSucursal = miSucursal?.TipoSucursal ?? "FRANQUICIA_B2B";
 
-            if (soyManagua && (dto.SucursalId != 1 && dto.SucursalId != 2))
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "No tiene permisos para crear usuarios en la sucursal de León." });
+                if (miTipoSucursal == "PROPIA")
+                {
+                    // Administrador de sucursal propia no puede crear usuarios dentro de franquicias B2B
+                    if (sucursalDestino.TipoSucursal != "PROPIA")
+                    {
+                        return StatusCode(StatusCodes.Status403Forbidden, 
+                            new { message = "No tiene permisos para crear usuarios en franquicias o subagencias B2B." });
+                    }
+                }
+                else
+                {
+                    // Administrador de franquicia B2B solo puede crear usuarios en su propia sucursal
+                    if (dto.SucursalId != miSucursalId)
+                    {
+                        return StatusCode(StatusCodes.Status403Forbidden, 
+                            new { message = "No tiene permisos para dar de alta usuarios fuera de su sucursal." });
+                    }
+                }
+            }
 
             bool existeUsername = await _context.Usuarios
                 .AnyAsync(u => u.Username.ToLower() == dto.Username.ToLower());
 
             if (existeUsername)
                 return BadRequest(new { message = "El nombre de usuario ya está en uso." });
-
-            bool existeSucursal = await _context.Sucursales.AnyAsync(s => s.Id == dto.SucursalId);
-            if (!existeSucursal)
-                return BadRequest(new { message = "La sucursal seleccionada no existe." });
 
             var nuevoUsuario = new Usuario
             {
@@ -104,14 +131,13 @@ namespace AbbaXpress.API.Controllers
 
             _context.Usuarios.Add(nuevoUsuario);
 
-            // Registro de auditoría por creación
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = miSucursalId,
                 UsuarioId = usuarioId,
                 Accion = "CREACION",
                 Modulo = "USUARIOS",
-                Descripcion = $"El usuario {nombreUsuario} creó una nueva cuenta para '{nuevoUsuario.Nombre}' (Usuario: {nuevoUsuario.Username}, Rol: {nuevoUsuario.Rol}, Sucursal ID: {nuevoUsuario.SucursalId}).",
+                Descripcion = $"El usuario {nombreUsuario} creó una cuenta para '{nuevoUsuario.Nombre}' (Usuario: {nuevoUsuario.Username}, Rol: {nuevoUsuario.Rol}, Sede: {sucursalDestino.Nombre}).",
                 FechaMovimiento = DateTime.UtcNow
             });
 
@@ -120,13 +146,14 @@ namespace AbbaXpress.API.Controllers
             return Ok(new { message = $"Usuario '{nuevoUsuario.Username}' creado exitosamente con rol {nuevoUsuario.Rol}." });
         }
 
-        // PUT: api/usuarios/{id} (Actualización de datos y contraseña)
+        // PUT: api/usuarios/{id}
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateUsuario(int id, [FromBody] UsuarioUpdateDto dto)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var sucursalClaim = User.FindFirstValue("SucursalId");
             var nombreOperador = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
@@ -134,19 +161,33 @@ namespace AbbaXpress.API.Controllers
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            var usuario = await _context.Usuarios.FindAsync(id);
+            var usuario = await _context.Usuarios.Include(u => u.Sucursal).FirstOrDefaultAsync(u => u.Id == id);
             if (usuario == null)
                 return NotFound(new { message = "Usuario no encontrado." });
 
-            // Validar límites de sede del operador actual
-            bool soyLeon = miSucursalId == 3;
-            bool soyManagua = miSucursalId == 1 || miSucursalId == 2;
+            var nuevaSucursal = await _context.Sucursales.FindAsync(dto.SucursalId);
+            if (nuevaSucursal == null || !nuevaSucursal.Activa)
+                return BadRequest(new { message = "La sucursal seleccionada no existe o está inactiva." });
 
-            if (soyLeon && (usuario.SucursalId != 3 || dto.SucursalId != 3))
-                return Forbid();
+            // Validación dinámica de alcance
+            if (userRole != "SUPER_ADMIN")
+            {
+                var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+                string miTipoSucursal = miSucursal?.TipoSucursal ?? "FRANQUICIA_B2B";
 
-            if (soyManagua && ((usuario.SucursalId != 1 && usuario.SucursalId != 2) || (dto.SucursalId != 1 && dto.SucursalId != 2)))
-                return Forbid();
+                if (miTipoSucursal == "PROPIA")
+                {
+                    // No puede editar ni transferir usuarios hacia/desde franquicias B2B
+                    if (usuario.Sucursal?.TipoSucursal != "PROPIA" || nuevaSucursal.TipoSucursal != "PROPIA")
+                        return Forbid();
+                }
+                else
+                {
+                    // Franquicia solo puede modificar a sus propios colaboradores y dejarlos en su sede
+                    if (usuario.SucursalId != miSucursalId || dto.SucursalId != miSucursalId)
+                        return Forbid();
+                }
+            }
 
             usuario.Nombre = dto.Nombre.Trim();
             usuario.Rol = dto.Rol.ToUpper();
@@ -159,10 +200,9 @@ namespace AbbaXpress.API.Controllers
                 passwordModificado = true;
             }
 
-            // Registro de auditoría por actualización
             string detalle = passwordModificado 
-                ? $"El usuario {nombreOperador} actualizó los datos y la contraseña de '{usuario.Nombre}' (Usuario: {usuario.Username})."
-                : $"El usuario {nombreOperador} actualizó los datos de '{usuario.Nombre}' (Usuario: {usuario.Username}, Rol: {usuario.Rol}).";
+                ? $"El usuario {nombreOperador} actualizó datos y contraseña de '{usuario.Nombre}' (Sede: {nuevaSucursal.Nombre})."
+                : $"El usuario {nombreOperador} actualizó datos de '{usuario.Nombre}' (Rol: {usuario.Rol}, Sede: {nuevaSucursal.Nombre}).";
 
             _context.LogsAuditoria.Add(new LogAuditoria
             {
@@ -183,6 +223,7 @@ namespace AbbaXpress.API.Controllers
         [HttpPut("{id}/toggle-estado")]
         public async Task<IActionResult> ToggleEstado(int id)
         {
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var sucursalClaim = User.FindFirstValue("SucursalId");
             var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
@@ -190,33 +231,38 @@ namespace AbbaXpress.API.Controllers
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
-            var usuario = await _context.Usuarios.FindAsync(id);
+            var usuario = await _context.Usuarios.Include(u => u.Sucursal).FirstOrDefaultAsync(u => u.Id == id);
             if (usuario == null)
                 return NotFound(new { message = "Usuario no encontrado." });
 
             if (usuario.Username == "admin")
                 return BadRequest(new { message = "No se puede desactivar la cuenta principal de Super Admin." });
 
-            bool soyLeon = miSucursalId == 3;
-            bool soyManagua = miSucursalId == 1 || miSucursalId == 2;
+            if (userRole != "SUPER_ADMIN")
+            {
+                var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+                string miTipoSucursal = miSucursal?.TipoSucursal ?? "FRANQUICIA_B2B";
 
-            if (soyLeon && usuario.SucursalId != 3)
-                return Forbid();
-
-            if (soyManagua && (usuario.SucursalId != 1 && usuario.SucursalId != 2))
-                return Forbid();
+                if (miTipoSucursal == "PROPIA")
+                {
+                    if (usuario.Sucursal?.TipoSucursal != "PROPIA") return Forbid();
+                }
+                else
+                {
+                    if (usuario.SucursalId != miSucursalId) return Forbid();
+                }
+            }
 
             usuario.Activo = !usuario.Activo;
             string estadoTexto = usuario.Activo ? "activó" : "desactivó";
 
-            // Registro de auditoría por cambio de estado
             _context.LogsAuditoria.Add(new LogAuditoria
             {
                 SucursalId = miSucursalId,
                 UsuarioId = usuarioId,
                 Accion = "MODIFICACION",
                 Modulo = "USUARIOS",
-                Descripcion = $"El usuario {nombreUsuario} {estadoTexto} la cuenta de '{usuario.Nombre}' (Usuario: {usuario.Username}).",
+                Descripcion = $"El usuario {nombreUsuario} {estadoTexto} la cuenta de '{usuario.Nombre}' ({usuario.Username}).",
                 FechaMovimiento = DateTime.UtcNow
             });
 

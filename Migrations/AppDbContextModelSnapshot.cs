@@ -737,11 +737,16 @@ namespace AbbaXpress.API.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("varchar(120)");
 
+                    b.Property<int>("SucursalId")
+                        .HasColumnType("int");
+
                     b.Property<string>("Telefono")
                         .HasMaxLength(25)
                         .HasColumnType("varchar(25)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("SucursalId");
 
                     b.ToTable("Proveedores");
 
@@ -755,6 +760,7 @@ namespace AbbaXpress.API.Migrations
                             CostoLibraMaritimo = 1.50m,
                             FechaRegistro = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "AereoMar Express",
+                            SucursalId = 1,
                             Telefono = "+1 305-555-0199"
                         });
                 });
@@ -936,7 +942,7 @@ namespace AbbaXpress.API.Migrations
                             Activo = true,
                             FechaCreacion = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Junior Ramírez (Super Admin)",
-                            PasswordHash = "$2a$11$eBh3HybZL/LWBWLrdahpXOxVAscjIFjBrDRrzFStCmDsWLATH2rQy",
+                            PasswordHash = "$2a$11$BL60KFr6Y1zWIbx/hY/bSedEdu9ddM.FzluIl5P./bZv0J5XAygrW",
                             Rol = "SUPER_ADMIN",
                             SucursalId = 1,
                             Username = "admin"
@@ -947,7 +953,7 @@ namespace AbbaXpress.API.Migrations
                             Activo = true,
                             FechaCreacion = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Admin Sucursal León",
-                            PasswordHash = "$2a$11$6.0Z.Rm.bgB/Pi7GdTBA.uF84BD3SH5W8HtoHdTz3HYRXiH2dYduK",
+                            PasswordHash = "$2a$11$fi.xeeT7smhCsWKubydhBeFhqqsTNY9VI9tQvqPLMM5z88a.s9VfC",
                             Rol = "ADMIN_SUCURSAL_INDEPENDIENTE",
                             SucursalId = 3,
                             Username = "adminleon"
@@ -1155,6 +1161,17 @@ namespace AbbaXpress.API.Migrations
                     b.Navigation("SucursalOrigen");
 
                     b.Navigation("UsuarioCreacion");
+                });
+
+            modelBuilder.Entity("AbbaXpress.API.Models.Proveedor", b =>
+                {
+                    b.HasOne("AbbaXpress.API.Models.Sucursal", "Sucursal")
+                        .WithMany()
+                        .HasForeignKey("SucursalId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Sucursal");
                 });
 
             modelBuilder.Entity("AbbaXpress.API.Models.SesionCaja", b =>

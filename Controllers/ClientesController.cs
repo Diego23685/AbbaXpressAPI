@@ -21,23 +21,45 @@ namespace AbbaXpress.API.Controllers
         }
 
         // GET: api/clientes
-        // GET: api/clientes
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<ClienteResponseDto>>> GetClientes([FromQuery] string? busqueda)
+        public async Task<ActionResult<IEnumerable<ClienteResponseDto>>> GetClientes([FromQuery] string? busqueda, [FromQuery] int? sucursalId)
         {
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
 
             var query = _context.Clientes.Where(c => c.Activo).AsQueryable();
 
-            // Aislamiento estricto y definitivo:
-            if (miSucursalId == 3) // Si el usuario es de León
+            var idsPropias = await _context.Sucursales
+                .Where(s => s.Activa && s.TipoSucursal == "PROPIA")
+                .Select(s => s.Id)
+                .ToListAsync();
+
+            if (userRole == "SUPER_ADMIN")
             {
-                query = query.Where(c => c.SucursalId == 3);
+                if (sucursalId.HasValue)
+                {
+                    if (!idsPropias.Contains(sucursalId.Value))
+                        return StatusCode(StatusCodes.Status403Forbidden, new { message = "Acceso denegado a clientes de franquicias B2B." });
+
+                    query = query.Where(c => c.SucursalId == sucursalId.Value);
+                }
+                else
+                {
+                    query = query.Where(c => idsPropias.Contains(c.SucursalId));
+                }
             }
-            else // Managua (Bolonia 1 y Doral 2, incluidos Super Admin y Admin Sede)
+            else
             {
-                query = query.Where(c => c.SucursalId == 1 || c.SucursalId == 2);
+                var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+                if (miSucursal?.TipoSucursal == "PROPIA")
+                {
+                    query = query.Where(c => idsPropias.Contains(c.SucursalId));
+                }
+                else
+                {
+                    query = query.Where(c => c.SucursalId == miSucursalId);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(busqueda))
@@ -127,24 +149,12 @@ namespace AbbaXpress.API.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<ClienteResponseDto>> GetCliente(int id)
         {
-            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
-            var sucursalClaim = User.FindFirstValue("SucursalId");
-            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
-
             var cliente = await _context.Clientes.FindAsync(id);
-
             if (cliente == null || !cliente.Activo)
                 return NotFound(new { message = "Cliente no encontrado" });
 
-            // Validación cruzada
-            if (userRole != "SUPER_ADMIN")
-            {
-                bool esLeon = miSucursalId == 3;
-                bool clienteEsLeon = cliente.SucursalId == 3;
-
-                if (esLeon != clienteEsLeon)
-                    return Forbid();
-            }
+            if (!await TieneAccesoClienteAsync(cliente.SucursalId))
+                return Forbid();
 
             return Ok(new ClienteResponseDto
             {
@@ -169,8 +179,23 @@ namespace AbbaXpress.API.Controllers
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
+
+            int targetSucursalId = miSucursalId;
+
+            if (userRole == "SUPER_ADMIN" && dto.SucursalId.HasValue)
+            {
+                var sucursalDestino = await _context.Sucursales.FindAsync(dto.SucursalId.Value);
+                if (sucursalDestino == null || !sucursalDestino.Activa)
+                    return BadRequest(new { message = "La sucursal seleccionada no existe o está inactiva." });
+
+                if (sucursalDestino.TipoSucursal == "FRANQUICIA_B2B")
+                    return StatusCode(StatusCodes.Status403Forbidden, new { message = "No se pueden crear clientes en franquicias B2B." });
+
+                targetSucursalId = dto.SucursalId.Value;
+            }
 
             var usuarioIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             int usuarioId = int.TryParse(usuarioIdClaim, out int uId) ? uId : 1;
@@ -178,7 +203,7 @@ namespace AbbaXpress.API.Controllers
 
             var nuevoCliente = new Cliente
             {
-                SucursalId = miSucursalId, // Queda asignado a la sede del usuario que lo registra
+                SucursalId = targetSucursalId,
                 Nombre = dto.Nombre.Trim(),
                 CodigoPais = dto.CodigoPais,
                 Telefono = dto.Telefono.Trim(),
@@ -195,7 +220,7 @@ namespace AbbaXpress.API.Controllers
 
             _context.LogsAuditoria.Add(new LogAuditoria
             {
-                SucursalId = miSucursalId,
+                SucursalId = targetSucursalId,
                 UsuarioId = usuarioId,
                 Accion = "CREACION",
                 Modulo = "CLIENTES",
@@ -227,26 +252,16 @@ namespace AbbaXpress.API.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateCliente(int id, [FromBody] ClienteUpdateDto dto)
         {
-            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
-            var sucursalClaim = User.FindFirstValue("SucursalId");
-            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
-
-            var usuarioIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            int usuarioId = int.TryParse(usuarioIdClaim, out int uId) ? uId : 1;
-            var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
-
             var cliente = await _context.Clientes.FindAsync(id);
             if (cliente == null)
                 return NotFound(new { message = "Cliente no encontrado" });
 
-            if (userRole != "SUPER_ADMIN")
-            {
-                bool esLeon = miSucursalId == 3;
-                bool clienteEsLeon = cliente.SucursalId == 3;
+            if (!await TieneAccesoClienteAsync(cliente.SucursalId))
+                return Forbid();
 
-                if (esLeon != clienteEsLeon)
-                    return Forbid();
-            }
+            var usuarioIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            int usuarioId = int.TryParse(usuarioIdClaim, out int uId) ? uId : 1;
+            var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
 
             cliente.Nombre = dto.Nombre.Trim();
             cliente.CodigoPais = dto.CodigoPais;
@@ -272,30 +287,20 @@ namespace AbbaXpress.API.Controllers
             return NoContent();
         }
 
-        // DELETE: api/clientes/5 (Borrado Lógico)
+        // DELETE: api/clientes/5
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteCliente(int id)
         {
-            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
-            var sucursalClaim = User.FindFirstValue("SucursalId");
-            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
-
-            var usuarioIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            int usuarioId = int.TryParse(usuarioIdClaim, out int uId) ? uId : 1;
-            var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
-
             var cliente = await _context.Clientes.FindAsync(id);
             if (cliente == null)
                 return NotFound(new { message = "Cliente no encontrado" });
 
-            if (userRole != "SUPER_ADMIN")
-            {
-                bool esLeon = miSucursalId == 3;
-                bool clienteEsLeon = cliente.SucursalId == 3;
+            if (!await TieneAccesoClienteAsync(cliente.SucursalId))
+                return Forbid();
 
-                if (esLeon != clienteEsLeon)
-                    return Forbid();
-            }
+            var usuarioIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            int usuarioId = int.TryParse(usuarioIdClaim, out int uId) ? uId : 1;
+            var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
 
             cliente.Activo = false;
 
@@ -311,6 +316,25 @@ namespace AbbaXpress.API.Controllers
 
             await _context.SaveChangesAsync();
             return NoContent();
+        }
+
+        private async Task<bool> TieneAccesoClienteAsync(int clienteSucursalId)
+        {
+            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            var sucursalClaim = User.FindFirstValue("SucursalId");
+            int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
+
+            var sucursalCliente = await _context.Sucursales.FindAsync(clienteSucursalId);
+            if (sucursalCliente == null) return false;
+
+            if (userRole == "SUPER_ADMIN")
+                return sucursalCliente.TipoSucursal == "PROPIA";
+
+            var miSucursal = await _context.Sucursales.FindAsync(miSucursalId);
+            if (miSucursal?.TipoSucursal == "PROPIA")
+                return sucursalCliente.TipoSucursal == "PROPIA";
+
+            return clienteSucursalId == miSucursalId;
         }
     }
 }
