@@ -86,6 +86,7 @@ namespace AbbaXpress.API.Controllers
                     Estado = p.Estado,
                     MetodoPago = p.MetodoPago,
                     TotalLbs = p.TotalLbs,
+                    TotalPiesCubicos = p.TotalPiesCubicos,
                     CargoDeliveryUSD = p.CargoDeliveryUSD,
                     DescuentoUSD = p.DescuentoUSD,
                     TotalCobradoUSD = p.TotalCobradoUSD,
@@ -100,9 +101,15 @@ namespace AbbaXpress.API.Controllers
                         Id = pkg.Id,
                         Tracking = pkg.Tracking,
                         Label = pkg.Label,
+                        Descripcion = pkg.Descripcion,
                         PesoLbs = pkg.PesoLbs,
+                        PiesCubicos = pkg.PiesCubicos ?? 0m,
+                        AltoIn = pkg.AltoIn ?? 0m,
+                        AnchoIn = pkg.AnchoIn ?? 0m,
+                        LargoIn = pkg.LargoIn ?? 0m,
                         ViaEnvio = pkg.ViaEnvio,
                         Categoria = pkg.Categoria,
+                        ProveedorId = pkg.ProveedorId,
                         TarifaAplicada = pkg.TarifaAplicada,
                         CostoProveedor = pkg.CostoProveedor,
                         SubtotalUSD = pkg.SubtotalUSD
@@ -135,6 +142,7 @@ namespace AbbaXpress.API.Controllers
                     Telefono = p.Cliente != null ? $"{p.Cliente.CodigoPais} {p.Cliente.Telefono}" : "",
                     p.Estado,
                     p.TotalLbs,
+                    p.TotalPiesCubicos,
                     TotalCobradoUSD = p.TotalCobradoUSD,
                     p.FechaRegistro,
                     Paquetes = p.Paquetes.Select(pkg => new
@@ -143,6 +151,7 @@ namespace AbbaXpress.API.Controllers
                         pkg.Tracking,
                         pkg.Label,
                         pkg.PesoLbs,
+                        PiesCubicos = pkg.PiesCubicos ?? 0m,
                         pkg.ViaEnvio,
                         pkg.Categoria
                     })
@@ -170,7 +179,8 @@ namespace AbbaXpress.API.Controllers
             var config = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == proforma.SucursalOrigenId)
                         ?? new ConfiguracionSucursal { TipoCambioNIO = 36.6243m, CostoProveedorAereo = 3.80m, CostoProveedorMaritimo = 1.50m };
 
-            decimal totalLbs = 0;
+            decimal totalLbsCalc = 0;
+            decimal totalPiesCubicosCalc = 0;
             decimal subtotalCargaUSD = 0;
             decimal totalCostoProveedorUSD = 0;
 
@@ -179,27 +189,50 @@ namespace AbbaXpress.API.Controllers
                 var paquete = proforma.Paquetes.FirstOrDefault(p => p.Id == dto.Id);
                 if (paquete == null) continue;
 
-                decimal subtotal = (dto.Categoria.ToUpper() == "CELULAR" || dto.Categoria.ToUpper() == "PALLET")
-                    ? dto.TarifaAplicada
-                    : dto.PesoLbs * dto.TarifaAplicada;
+                string catUpper = dto.Categoria.ToUpper();
+                decimal subtotal = 0;
+                decimal costoProveedor = 0;
 
-                decimal costoLibra = dto.ViaEnvio.ToUpper() == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo;
-                decimal costoProveedor = (dto.Categoria.ToUpper() == "CELULAR") ? 15.00m : dto.PesoLbs * costoLibra;
+                if (catUpper == "CELULAR")
+                {
+                    subtotal = dto.TarifaAplicada;
+                    costoProveedor = 15.00m;
+                    totalLbsCalc += dto.PesoLbs;
+                }
+                else if (catUpper == "PIES_CUBICOS")
+                {
+                    subtotal = dto.PiesCubicos * dto.TarifaAplicada;
+                    costoProveedor = dto.PiesCubicos * (config.CostoProveedorMaritimo * 10.0m);
+                    totalPiesCubicosCalc += dto.PiesCubicos;
+                }
+                else
+                {
+                    subtotal = dto.PesoLbs * dto.TarifaAplicada;
+                    decimal costoLibra = dto.ViaEnvio.ToUpper() == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo;
+                    costoProveedor = dto.PesoLbs * costoLibra;
+                    totalLbsCalc += dto.PesoLbs;
+                }
 
                 paquete.Tracking = dto.Tracking.Trim().ToUpper();
-                paquete.PesoLbs = dto.PesoLbs;
-                paquete.ViaEnvio = dto.ViaEnvio.ToUpper();
-                paquete.Categoria = dto.Categoria.ToUpper();
+                paquete.Descripcion = dto.Descripcion;
+                paquete.PesoLbs = catUpper == "PIES_CUBICOS" ? 0 : dto.PesoLbs;
+                paquete.PiesCubicos = catUpper == "PIES_CUBICOS" ? dto.PiesCubicos : 0m;
+                paquete.AltoIn = dto.AltoIn;
+                paquete.AnchoIn = dto.AnchoIn;
+                paquete.LargoIn = dto.LargoIn;
+                paquete.ViaEnvio = catUpper == "PIES_CUBICOS" ? "MARITIMO" : dto.ViaEnvio.ToUpper();
+                paquete.Categoria = catUpper;
+                paquete.ProveedorId = dto.ProveedorId;
                 paquete.TarifaAplicada = dto.TarifaAplicada;
                 paquete.SubtotalUSD = subtotal;
                 paquete.CostoProveedor = costoProveedor;
 
-                totalLbs += dto.PesoLbs;
                 subtotalCargaUSD += subtotal;
                 totalCostoProveedorUSD += costoProveedor;
             }
 
-            proforma.TotalLbs = totalLbs;
+            proforma.TotalLbs = totalLbsCalc;
+            proforma.TotalPiesCubicos = totalPiesCubicosCalc;
             proforma.TotalCobradoUSD = Math.Max(0, (subtotalCargaUSD + proforma.CargoDeliveryUSD) - proforma.DescuentoUSD);
             proforma.TotalCostoProveedorUSD = totalCostoProveedorUSD;
 
@@ -213,7 +246,7 @@ namespace AbbaXpress.API.Controllers
                 UsuarioId = usuarioId,
                 Accion = "MODIFICACION",
                 Modulo = "PROFORMAS",
-                Descripcion = $"El usuario {nombreUsuario} corrigió peso/tarifas en los bultos de la proforma #{proforma.NumeroProforma}.",
+                Descripcion = $"El usuario {nombreUsuario} corrigió peso/volumen/tarifas en los bultos de la proforma #{proforma.NumeroProforma}.",
                 FechaMovimiento = DateTime.UtcNow
             });
 
@@ -320,14 +353,19 @@ namespace AbbaXpress.API.Controllers
             sb.AppendLine($"Hola *{cliente?.Nombre}*, tus paquetes ya están listos para retiro/entrega.");
             sb.AppendLine();
             sb.AppendLine($"*Proforma:* #{proforma.NumeroProforma}");
-            sb.AppendLine($"*Peso Total:* {proforma.TotalLbs:F2} lbs");
+            if (proforma.TotalPiesCubicos > 0)
+                sb.AppendLine($"*Volumen Total:* {proforma.TotalPiesCubicos:F2} ft³");
+            else
+                sb.AppendLine($"*Peso Total:* {proforma.TotalLbs:F2} lbs");
             sb.AppendLine($"*Cant. Paquetes:* {proforma.Paquetes.Count}");
             sb.AppendLine();
 
             foreach (var pkg in proforma.Paquetes)
             {
                 string label = string.IsNullOrEmpty(pkg.Label) ? "Paquete" : pkg.Label;
-                sb.AppendLine($"• {label} ({pkg.Tracking}): {pkg.PesoLbs:F2} lb - ${pkg.SubtotalUSD:F2} USD");
+                decimal pies = pkg.PiesCubicos ?? 0m;
+                string detalleMedida = pkg.Categoria == "PIES_CUBICOS" ? $"{pies:F2} ft³" : $"{pkg.PesoLbs:F2} lb";
+                sb.AppendLine($"• {label} ({pkg.Tracking}): {detalleMedida} - ${pkg.SubtotalUSD:F2} USD");
             }
 
             if (proforma.CargoDeliveryUSD > 0)
@@ -364,12 +402,14 @@ namespace AbbaXpress.API.Controllers
             decimal totalPorCobrarUSD = pendientes.Sum(p => p.TotalCobradoUSD);
             decimal totalFacturadoUSD = facturadas.Sum(p => p.TotalCobradoUSD);
             decimal totalLibrasPendientes = pendientes.Sum(p => p.TotalLbs);
+            decimal totalPiesCubicosPendientes = pendientes.Sum(p => p.TotalPiesCubicos);
 
             return Ok(new
             {
                 totalPorCobrarUSD,
                 totalFacturadoUSD,
                 totalLibrasPendientes,
+                totalPiesCubicosPendientes,
                 cantidadPendientes = pendientes.Count,
                 cantidadFacturadas = facturadas.Count
             });
@@ -393,7 +433,6 @@ namespace AbbaXpress.API.Controllers
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
             int sucursalOrigenId = int.TryParse(sucursalIdClaim, out int sId) ? sId : 1;
 
-            // Detección genérica de sucursal destino
             int sucursalDestinoId = dto.SucursalDestinoId.HasValue && dto.SucursalDestinoId.Value > 0
                 ? dto.SucursalDestinoId.Value
                 : sucursalOrigenId;
@@ -413,6 +452,7 @@ namespace AbbaXpress.API.Controllers
             string numeroCorrelativo = $"ABBA-{1001 + totalProformas}";
 
             decimal totalLibras = 0;
+            decimal totalPiesCubicos = 0;
             decimal subtotalCargaUSD = 0;
             decimal totalCostoProveedorUSD = 0;
 
@@ -420,7 +460,9 @@ namespace AbbaXpress.API.Controllers
 
             foreach (var item in dto.Paquetes)
             {
+                string catUpper = item.Categoria.ToUpper();
                 decimal costoProveedorLibra = item.ViaEnvio == "MARITIMO" ? config.CostoProveedorMaritimo : config.CostoProveedorAereo;
+                
                 if (item.ProveedorId.HasValue && proveedores.TryGetValue(item.ProveedorId.Value, out var prov))
                 {
                     costoProveedorLibra = item.ViaEnvio == "MARITIMO" ? prov.CostoLibraMaritimo : prov.CostoLibraAereo;
@@ -430,12 +472,13 @@ namespace AbbaXpress.API.Controllers
                 decimal tarifa = 0;
                 decimal subtotalItem = 0;
 
-                switch (item.Categoria.ToUpper())
+                switch (catUpper)
                 {
                     case "CELULAR":
                         tarifa = item.TarifaManual ?? cliente.TarifaCelularFija ?? config.TarifaCelularFija;
                         costoProveedorTotal = 15.00m;
                         subtotalItem = tarifa;
+                        totalLibras += item.PesoLbs;
                         break;
 
                     case "SMART_TV":
@@ -443,29 +486,37 @@ namespace AbbaXpress.API.Controllers
                             ? (cliente.TarifaTvMaritimo ?? config.TarifaTvMaritimo) 
                             : (cliente.TarifaTvAereo ?? config.TarifaTvAereo));
                         subtotalItem = item.PesoLbs * tarifa;
+                        totalLibras += item.PesoLbs;
                         break;
 
-                    case "PALLET":
-                        tarifa = item.TarifaManual ?? 0.00m;
-                        subtotalItem = tarifa;
+                    case "PIES_CUBICOS":
+                        tarifa = item.TarifaManual ?? 22.00m;
+                        subtotalItem = item.PiesCubicos * tarifa;
+                        costoProveedorTotal = item.PiesCubicos * (config.CostoProveedorMaritimo * 10.0m);
+                        totalPiesCubicos += item.PiesCubicos;
                         break;
 
                     default:
                         tarifa = item.TarifaManual ?? (item.ViaEnvio == "MARITIMO" ? cliente.TarifaMaritimo : cliente.TarifaAereo);
                         subtotalItem = item.PesoLbs * tarifa;
+                        totalLibras += item.PesoLbs;
                         break;
                 }
 
-                totalLibras += item.PesoLbs;
                 subtotalCargaUSD += subtotalItem;
                 totalCostoProveedorUSD += costoProveedorTotal;
 
                 nuevosPaquetes.Add(new Paquete
                 {
                     Tracking = item.Tracking.Trim().ToUpper(),
-                    PesoLbs = item.PesoLbs,
-                    ViaEnvio = item.ViaEnvio.ToUpper(),
-                    Categoria = item.Categoria.ToUpper(),
+                    Descripcion = item.Descripcion,
+                    PesoLbs = catUpper == "PIES_CUBICOS" ? 0 : item.PesoLbs,
+                    PiesCubicos = catUpper == "PIES_CUBICOS" ? item.PiesCubicos : 0m,
+                    AltoIn = item.AltoIn,
+                    AnchoIn = item.AnchoIn,
+                    LargoIn = item.LargoIn,
+                    ViaEnvio = catUpper == "PIES_CUBICOS" ? "MARITIMO" : item.ViaEnvio.ToUpper(),
+                    Categoria = catUpper,
                     TarifaAplicada = tarifa,
                     ProveedorId = item.ProveedorId,
                     CostoProveedor = costoProveedorTotal,
@@ -483,6 +534,7 @@ namespace AbbaXpress.API.Controllers
                 Estado = "PENDIENTE_PAGO",
                 MetodoPago = "CREDITO",
                 TotalLbs = totalLibras,
+                TotalPiesCubicos = totalPiesCubicos,
                 CargoDeliveryUSD = 0.00m,
                 DescuentoUSD = 0.00m,
                 TotalCobradoUSD = subtotalCargaUSD,
@@ -502,7 +554,7 @@ namespace AbbaXpress.API.Controllers
                 {
                     SucursalDestinoId = sucursalDestinoId,
                     Proforma = proforma,
-                    Mensaje = $"Nueva carga registrada hacia su sede (#{numeroCorrelativo} - {totalLibras:F2} lbs).",
+                    Mensaje = $"Nueva carga registrada hacia su sede (#{numeroCorrelativo} - {totalLibras:F2} lbs / {totalPiesCubicos:F2} ft³).",
                     Leida = false,
                     FechaCreacion = DateTime.UtcNow
                 });
@@ -526,6 +578,7 @@ namespace AbbaXpress.API.Controllers
                 proformaId = proforma.Id,
                 numeroProforma = proforma.NumeroProforma,
                 totalLibras = proforma.TotalLbs,
+                totalPiesCubicos = proforma.TotalPiesCubicos,
                 totalCobradoUSD = proforma.TotalCobradoUSD
             });
         }
@@ -588,7 +641,6 @@ namespace AbbaXpress.API.Controllers
                 desgloseVuelto = CalcularDesgloseVuelto(vuelto, dto.MonedaPagoEfectivo);
             }
 
-            // Gasto operativo automático en la subagencia receptora
             var sedeDestino = await _context.Sucursales.FindAsync(proforma.SucursalDestinoId);
             if (sedeDestino != null && sedeDestino.TipoSucursal == "FRANQUICIA_B2B" && proforma.SucursalOrigenId != proforma.SucursalDestinoId)
             {
@@ -661,7 +713,6 @@ namespace AbbaXpress.API.Controllers
         {
             var sucursalClaim = User.FindFirstValue("SucursalId");
             int miSucursalId = int.TryParse(sucursalClaim, out int sId) ? sId : 1;
-            var userRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var nombreUsuario = User.FindFirstValue(ClaimTypes.Name) ?? "Operador";
             int usuarioId = int.TryParse(userIdClaim, out int uId) ? uId : 1;
@@ -684,14 +735,13 @@ namespace AbbaXpress.API.Controllers
             var configLocal = await _context.Configuraciones.FirstOrDefaultAsync(c => c.SucursalId == miSucursalId)
                             ?? new ConfiguracionSucursal { SucursalId = miSucursalId };
 
-            // 1. Marcar la remisión como completada y bloqueada
             proformaOriginal.Estado = "PROCESADO_ASIGNADO";
 
-            // 2. Crear proforma final local
             var totalProformas = await _context.Proformas.CountAsync();
             string correlativoLocal = $"ABBA-{1001 + totalProformas}";
 
             decimal totalLibras = 0;
+            decimal totalPiesCubicos = 0;
             decimal subtotalCargaUSD = 0;
             decimal totalCostoProveedorUSD = 0;
 
@@ -701,13 +751,18 @@ namespace AbbaXpress.API.Controllers
             {
                 var pkgDto = dto.Paquetes.FirstOrDefault(p => p.Id == itemOriginal.Id);
                 decimal peso = pkgDto != null && pkgDto.PesoLbs > 0 ? pkgDto.PesoLbs : itemOriginal.PesoLbs;
+                decimal ft3 = pkgDto != null && pkgDto.PiesCubicos > 0 ? pkgDto.PiesCubicos : (itemOriginal.PiesCubicos ?? 0m);
                 decimal tarifa = pkgDto != null && pkgDto.TarifaAplicada > 0 ? pkgDto.TarifaAplicada : itemOriginal.TarifaAplicada;
 
-                decimal subtotal = (itemOriginal.Categoria == "CELULAR" || itemOriginal.Categoria == "PALLET")
-                    ? tarifa
+                decimal subtotal = (itemOriginal.Categoria == "CELULAR" || itemOriginal.Categoria == "PIES_CUBICOS")
+                    ? (itemOriginal.Categoria == "PIES_CUBICOS" ? ft3 * tarifa : tarifa)
                     : peso * tarifa;
 
-                totalLibras += peso;
+                if (itemOriginal.Categoria == "PIES_CUBICOS")
+                    totalPiesCubicos += ft3;
+                else
+                    totalLibras += peso;
+
                 subtotalCargaUSD += subtotal;
                 totalCostoProveedorUSD += itemOriginal.TarifaAplicada;
 
@@ -715,7 +770,12 @@ namespace AbbaXpress.API.Controllers
                 {
                     Tracking = itemOriginal.Tracking,
                     Label = itemOriginal.Label,
+                    Descripcion = itemOriginal.Descripcion,
                     PesoLbs = peso,
+                    PiesCubicos = ft3,
+                    AltoIn = itemOriginal.AltoIn,
+                    AnchoIn = itemOriginal.AnchoIn,
+                    LargoIn = itemOriginal.LargoIn,
                     ViaEnvio = itemOriginal.ViaEnvio,
                     Categoria = itemOriginal.Categoria,
                     TarifaAplicada = tarifa,
@@ -738,6 +798,7 @@ namespace AbbaXpress.API.Controllers
                 Estado = estadoInicial,
                 MetodoPago = dto.MetodoPago ?? "CREDITO",
                 TotalLbs = totalLibras,
+                TotalPiesCubicos = totalPiesCubicos,
                 CargoDeliveryUSD = dto.CargoDeliveryUSD,
                 DescuentoUSD = dto.DescuentoUSD,
                 TotalCobradoUSD = totalFinalCobradoUSD,
@@ -781,7 +842,12 @@ namespace AbbaXpress.API.Controllers
                 if (sucursalIdParam.HasValue)
                     return (true, new List<int> { sucursalIdParam.Value }, null);
 
-                return (true, new List<int> { 1, 2, 3 }, null);
+                var idsSucursalesPropias = _context.Sucursales
+                    .Where(s => s.Activa && s.TipoSucursal != "FRANQUICIA_B2B")
+                    .Select(s => s.Id)
+                    .ToList();
+
+                return (true, idsSucursalesPropias, null);
             }
 
             if (sucursalIdParam.HasValue && sucursalIdParam.Value != miSucursalId)

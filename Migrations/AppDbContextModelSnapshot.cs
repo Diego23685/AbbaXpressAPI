@@ -180,6 +180,9 @@ namespace AbbaXpress.API.Migrations
                     b.Property<decimal>("TarifaMaritimoGeneral")
                         .HasColumnType("decimal(10,2)");
 
+                    b.Property<decimal>("TarifaPieCubicoGeneral")
+                        .HasColumnType("decimal(65,30)");
+
                     b.Property<decimal>("TarifaTvAereo")
                         .HasColumnType("decimal(10,2)");
 
@@ -208,6 +211,7 @@ namespace AbbaXpress.API.Migrations
                             TarifaAereoGeneral = 7.00m,
                             TarifaCelularFija = 35.00m,
                             TarifaMaritimoGeneral = 4.00m,
+                            TarifaPieCubicoGeneral = 22.00m,
                             TarifaTvAereo = 7.50m,
                             TarifaTvMaritimo = 3.50m,
                             TipoCambioNIO = 36.6243m,
@@ -222,6 +226,7 @@ namespace AbbaXpress.API.Migrations
                             TarifaAereoGeneral = 7.50m,
                             TarifaCelularFija = 35.00m,
                             TarifaMaritimoGeneral = 4.50m,
+                            TarifaPieCubicoGeneral = 22.00m,
                             TarifaTvAereo = 8.00m,
                             TarifaTvMaritimo = 4.00m,
                             TipoCambioNIO = 36.6243m,
@@ -565,6 +570,12 @@ namespace AbbaXpress.API.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int");
 
+                    b.Property<decimal?>("AltoIn")
+                        .HasColumnType("decimal(65,30)");
+
+                    b.Property<decimal?>("AnchoIn")
+                        .HasColumnType("decimal(65,30)");
+
                     b.Property<string>("Categoria")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -573,12 +584,21 @@ namespace AbbaXpress.API.Migrations
                     b.Property<decimal>("CostoProveedor")
                         .HasColumnType("decimal(10,2)");
 
+                    b.Property<string>("Descripcion")
+                        .HasColumnType("longtext");
+
                     b.Property<string>("Label")
                         .HasMaxLength(150)
                         .HasColumnType("varchar(150)");
 
+                    b.Property<decimal?>("LargoIn")
+                        .HasColumnType("decimal(65,30)");
+
                     b.Property<decimal>("PesoLbs")
                         .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal?>("PiesCubicos")
+                        .HasColumnType("decimal(65,30)");
 
                     b.Property<int>("ProformaId")
                         .HasColumnType("int");
@@ -687,6 +707,9 @@ namespace AbbaXpress.API.Migrations
 
                     b.Property<decimal>("TotalLbs")
                         .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("TotalPiesCubicos")
+                        .HasColumnType("decimal(65,30)");
 
                     b.Property<int>("UsuarioCreacionId")
                         .HasColumnType("int");
@@ -942,7 +965,7 @@ namespace AbbaXpress.API.Migrations
                             Activo = true,
                             FechaCreacion = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Junior Ramírez (Super Admin)",
-                            PasswordHash = "$2a$11$BL60KFr6Y1zWIbx/hY/bSedEdu9ddM.FzluIl5P./bZv0J5XAygrW",
+                            PasswordHash = "$2a$11$o.urzG/.z/5OIwMHV0zmrumxn7riZk6xk4T/QEQzC35VbH35cRe1e",
                             Rol = "SUPER_ADMIN",
                             SucursalId = 1,
                             Username = "admin"
@@ -953,7 +976,7 @@ namespace AbbaXpress.API.Migrations
                             Activo = true,
                             FechaCreacion = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Nombre = "Admin Sucursal León",
-                            PasswordHash = "$2a$11$fi.xeeT7smhCsWKubydhBeFhqqsTNY9VI9tQvqPLMM5z88a.s9VfC",
+                            PasswordHash = "$2a$11$icTMyIesMUIvj/PAeV5FAupgYxH3jpzU8TTBDepLtiELg/na8f1LC",
                             Rol = "ADMIN_SUCURSAL_INDEPENDIENTE",
                             SucursalId = 3,
                             Username = "adminleon"

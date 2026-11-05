@@ -40,5 +40,7 @@ namespace AbbaXpress.API.Models
         public decimal CostoProveedorMaritimo { get; set; } = 1.50m;
 
         public DateTime UltimaModificacion { get; set; } = DateTime.UtcNow;
+
+        public decimal TarifaPieCubicoGeneral { get; set; } = 22.00m; // Tarifa por pie cúbico, aplicable a envíos volumétricos
     }
 }

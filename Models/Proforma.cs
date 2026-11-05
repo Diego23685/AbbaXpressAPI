@@ -17,29 +17,29 @@ namespace AbbaXpress.API.Models
         public Cliente? Cliente { get; set; }
 
         // Dentro de Proforma.cs
-public int? SesionCajaId { get; set; }
-[ForeignKey("SesionCajaId")]
-public SesionCaja? SesionCaja { get; set; }
+        public int? SesionCajaId { get; set; }
+        [ForeignKey("SesionCajaId")]
+        public SesionCaja? SesionCaja { get; set; }
 
-// Para cobros con Tarjeta (POS)
-[Column(TypeName = "decimal(5,2)")]
-public decimal PorcentajeComisionPOS { get; set; } = 0.00m;
+        // Para cobros con Tarjeta (POS)
+        [Column(TypeName = "decimal(5,2)")]
+        public decimal PorcentajeComisionPOS { get; set; } = 0.00m;
 
-[Column(TypeName = "decimal(10,2)")]
-public decimal MontoComisionPOS { get; set; } = 0.00m;
+        [Column(TypeName = "decimal(10,2)")]
+        public decimal MontoComisionPOS { get; set; } = 0.00m;
 
-// Para cobros en Efectivo
-[Column(TypeName = "decimal(10,2)")]
-public decimal MontoRecibidoEfectivo { get; set; } = 0.00m;
+        // Para cobros en Efectivo
+        [Column(TypeName = "decimal(10,2)")]
+        public decimal MontoRecibidoEfectivo { get; set; } = 0.00m;
 
-[Column(TypeName = "decimal(10,2)")]
-public decimal MontoVueltoEntregado { get; set; } = 0.00m;
+        [Column(TypeName = "decimal(10,2)")]
+        public decimal MontoVueltoEntregado { get; set; } = 0.00m;
 
-// Enlace de cobro intersucursal:
-public bool EsCargaInterSucursal { get; set; } = false;
-public int? GastoGeneradoLeonId { get; set; }
-[ForeignKey("GastoGeneradoLeonId")]
-public GastoOperativo? GastoGeneradoLeon { get; set; }
+        // Enlace de cobro intersucursal:
+        public bool EsCargaInterSucursal { get; set; } = false;
+        public int? GastoGeneradoLeonId { get; set; }
+        [ForeignKey("GastoGeneradoLeonId")]
+        public GastoOperativo? GastoGeneradoLeon { get; set; }
 
         public int SucursalOrigenId { get; set; }
         [ForeignKey("SucursalOrigenId")]
@@ -85,5 +85,7 @@ public GastoOperativo? GastoGeneradoLeon { get; set; }
 
         // Relación 1:N con Paquetes
         public ICollection<Paquete> Paquetes { get; set; } = new List<Paquete>();
+
+        public decimal TotalPiesCubicos { get; set; } = 0.00m;
     }
 }

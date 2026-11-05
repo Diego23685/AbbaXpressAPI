@@ -9,15 +9,26 @@ namespace AbbaXpress.API.DTOs
 
         public string? Label { get; set; }
 
+        public string? Descripcion { get; set; }
+
         [Range(0, 10000, ErrorMessage = "El peso debe ser mayor o igual a 0")]
         public decimal PesoLbs { get; set; } = 0.00m;
+
+        // Soporte para volumen en Pies Cúbicos
+        [Range(0, 10000, ErrorMessage = "Los pies cúbicos deben ser mayor o igual a 0")]
+        public decimal PiesCubicos { get; set; } = 0.00m;
+
+        public decimal AltoIn { get; set; } = 0.00m;
+        public decimal AnchoIn { get; set; } = 0.00m;
+        public decimal LargoIn { get; set; } = 0.00m;
 
         // "AEREO" o "MARITIMO"
         public string ViaEnvio { get; set; } = "AEREO";
 
-        // "GENERAL", "SMART_TV", "CELULAR", "PALLET"
+        // "GENERAL", "SMART_TV", "CELULAR", "PIES_CUBICOS"
         public string Categoria { get; set; } = "GENERAL";
 
+        public int? ProveedorId { get; set; }
         public decimal? TarifaManual { get; set; } // Opcional: si el operador la sobreescribe
         public decimal? CostoProveedorManual { get; set; }
     }
@@ -27,7 +38,7 @@ namespace AbbaXpress.API.DTOs
         [Required(ErrorMessage = "Debe especificar el cliente")]
         public int ClienteId { get; set; }
 
-        public int SucursalDestinoId { get; set; }
+        public int? SucursalDestinoId { get; set; }
 
         public decimal CargoDeliveryUSD { get; set; } = 0.00m;
         public decimal DescuentoUSD { get; set; } = 0.00m;
@@ -40,14 +51,50 @@ namespace AbbaXpress.API.DTOs
         public List<PaqueteItemCreateDto> Paquetes { get; set; } = new();
     }
 
+    public class RecepcionCargaDto
+    {
+        [Required(ErrorMessage = "Debe especificar el cliente")]
+        public int ClienteId { get; set; }
+
+        public int? SucursalDestinoId { get; set; }
+
+        [MinLength(1, ErrorMessage = "Debe incluir al menos un paquete")]
+        public List<PaqueteItemCreateDto> Paquetes { get; set; } = new();
+    }
+
+    public class PaqueteUpdateDto
+    {
+        public int Id { get; set; }
+
+        [Required(ErrorMessage = "El tracking es obligatorio")]
+        public string Tracking { get; set; } = string.Empty;
+
+        public string? Descripcion { get; set; }
+        public decimal PesoLbs { get; set; } = 0.00m;
+        public decimal PiesCubicos { get; set; } = 0.00m;
+        public decimal AltoIn { get; set; } = 0.00m;
+        public decimal AnchoIn { get; set; } = 0.00m;
+        public decimal LargoIn { get; set; } = 0.00m;
+        public string ViaEnvio { get; set; } = "AEREO";
+        public string Categoria { get; set; } = "GENERAL";
+        public int? ProveedorId { get; set; }
+        public decimal TarifaAplicada { get; set; }
+    }
+
     public class PaqueteResponseDto
     {
         public int Id { get; set; }
         public string Tracking { get; set; } = string.Empty;
         public string? Label { get; set; }
+        public string? Descripcion { get; set; }
         public decimal PesoLbs { get; set; }
+        public decimal PiesCubicos { get; set; }
+        public decimal AltoIn { get; set; }
+        public decimal AnchoIn { get; set; }
+        public decimal LargoIn { get; set; }
         public string ViaEnvio { get; set; } = string.Empty;
         public string Categoria { get; set; } = string.Empty;
+        public int? ProveedorId { get; set; }
         public decimal TarifaAplicada { get; set; }
         public decimal CostoProveedor { get; set; }
         public decimal SubtotalUSD { get; set; }
@@ -65,6 +112,7 @@ namespace AbbaXpress.API.DTOs
         public string Estado { get; set; } = string.Empty;
         public string MetodoPago { get; set; } = string.Empty;
         public decimal TotalLbs { get; set; }
+        public decimal TotalPiesCubicos { get; set; }
         public decimal CargoDeliveryUSD { get; set; }
         public decimal DescuentoUSD { get; set; }
         public decimal TotalCobradoUSD { get; set; }
@@ -81,6 +129,7 @@ namespace AbbaXpress.API.DTOs
     {
         public int Id { get; set; }
         public decimal PesoLbs { get; set; }
+        public decimal PiesCubicos { get; set; }
         public decimal TarifaAplicada { get; set; }
     }
 

@@ -47,5 +47,11 @@ namespace AbbaXpress.API.Models
 
         [Column(TypeName = "decimal(10,2)")]
         public decimal SubtotalUSD { get; set; } = 0.00m; // Monto final facturado del paquete
+
+        public string? Descripcion { get; set; } // Descripción del paquete, opcional
+        public decimal? PiesCubicos { get; set; } = 0.00m; // Pies cúbicos del paquete, opcional
+        public decimal? AltoIn { get; set; } = 0.00m;
+        public decimal? AnchoIn { get; set; } = 0.00m;
+        public decimal? LargoIn { get; set; } = 0.00m;
     }
 }
